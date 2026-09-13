@@ -1,0 +1,28 @@
+name: Release
+run-name: "Release ${{ github.ref_name }}"
+
+# Everything this release does lives in cameraunlock-core's release-mod.yml.
+# Only the values below are this mod's. Pinned to a commit SHA, never a branch:
+# that workflow runs with contents:write, the Discord webhook and the Lopari PAT.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  release:
+    uses: itsloopyo/cameraunlock-core/.github/workflows/release-mod.yml@435915a8a3d8e1b799cc169b74f1fcf72b9534e7
+    with:
+      project-name: 'Wolfenstein: The New Order Head Tracking'
+      version-source: cmake
+      version-path: 'CMakeLists.txt'
+      # What the GitHub release notes are generated from. CHANGELOG.md is built
+      # from every commit, so anything left out here ships in the changelog and
+      # never in the release body - which is where a compile-flag change, a
+      # vendored loader bump or a manifest change would have gone missing.
+      artifact-paths: 'src/ cameraunlock-core/ scripts/install.cmd scripts/uninstall.cmd CMakeLists.txt vendor/ launcher-manifest.json README.md'
+      setup-msbuild: true
+    permissions:
+      contents: write
+    secrets: inherit

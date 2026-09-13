@@ -1,0 +1,81 @@
+[workspace]
+name = "wolfenstein-the-new-order-headtracking"
+version = "0.0.0"
+description = "Head tracking mod for Wolfenstein: The New Order"
+authors = ["itsloopyo"]
+license = "MIT"
+license-file = "LICENSE"
+channels = ["conda-forge"]
+platforms = ["win-64"]
+
+[tasks]
+sync = "git submodule update --remote cameraunlock-core"
+
+# No -G: let CMake auto-detect the installed Visual Studio generator. Pinning
+# "Visual Studio 17 2022" broke on CI once the windows runner image moved to
+# VS 2026 (VS 17 absent); auto-detect picks whatever VS the machine has.
+setup = "cmake -S . -B build -A x64"
+build = { cmd = "cmake --build build --config Release", depends-on = ["setup"] }
+
+# The installer ZIP from the build output. No Nexus ZIP: see the notes at the
+# top of scripts/package-release.ps1 for why this mod is installer-only.
+package = { cmd = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1", depends-on = ["build"] }
+
+# Build + deploy into the detected game install (the dev loop).
+install = { cmd = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deploy.ps1", depends-on = ["build"] }
+uninstall = 'cmd /c scripts\uninstall.cmd'
+
+# Bump the vendored Ultimate ASI Loader. Manual, with a commit attached -
+# nothing depends on it; build, package and release consume whatever is
+# committed under vendor/.
+update-deps = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/update-deps.ps1"
+
+# Full release workflow: changelog, version stamp, package, commit, tag, push.
+# Unattended - `pixi run release minor` is the authorization, there is no prompt.
+release = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release.ps1"
+
+# Script tests. No Pester dependency (the Windows runner ships Pester 3.4,
+# which cannot run Pester 5 syntax), matching cameraunlock-core/powershell/tests.
+test-modproject = "powershell -NoProfile -ExecutionPolicy Bypass -File tests/ModProject.Tests.ps1"
+test-releasesupport = "powershell -NoProfile -ExecutionPolicy Bypass -File tests/ReleaseSupport.Tests.ps1"
+test-cameramath = { cmd = "build/Release/camera_math_tests.exe", depends-on = ["build"] }
+test-aimprojection = { cmd = "build/Release/aim_projection_tests.exe", depends-on = ["build"] }
+test-windowplacement = { cmd = "build/Release/window_placement_tests.exe", depends-on = ["build"] }
+test-ads = { cmd = "build/Release/ads_tests.exe", depends-on = ["build"] }
+test-config = { cmd = "build/Release/config_tests.exe", depends-on = ["build"] }
+# Binds real loopback sockets and sleeps through several retry periods, so it is
+# the slow one (~10s). It stays in `test` regardless: the thing it measures is a
+# duration a player waits, and nothing else in the suite would notice it growing.
+test-trackerrecovery = { cmd = "build/Release/tracker_feed_recovery_tests.exe", depends-on = ["build"] }
+test = { depends-on = ["test-modproject", "test-releasesupport", "test-cameramath", "test-aimprojection", "test-windowplacement", "test-ads", "test-config", "test-trackerrecovery"] }
+
+# Test-Path per directory rather than -ErrorAction SilentlyContinue. The flag
+# was there to tolerate an absent directory, but it also swallows a locked one -
+# the game running with the .asi loaded, an open Explorer window, an AV scan -
+# so a partial delete reported success and `pixi run clean; pixi run package`
+# stopped reproducing a cold checkout, which is the only reason this task exists.
+#
+# -ErrorAction Stop on each removal, not just Test-Path around it. A sharing
+# violation is a NON-TERMINATING error, so without it a locked build/ fails,
+# release/ is still deleted, and the task exits 0 - the same silent partial
+# delete the flag this replaced was doing. Verified: locked exits 1, absent and
+# unlocked both exit 0.
+#
+# Spelled out per directory rather than looped: pixi's task shell expands `$d`
+# itself, before PowerShell ever sees the line, so a `foreach ($d in ...)` here
+# reaches PowerShell as `foreach ( in ...)` and dies with "Missing variable name
+# after foreach" without deleting anything. That is also why the preference
+# variable is not set inline - the per-command switch needs no escaping.
+clean = "powershell -NoProfile -Command \"if (Test-Path -LiteralPath build) { Remove-Item -Recurse -Force -ErrorAction Stop -LiteralPath build }; if (Test-Path -LiteralPath release) { Remove-Item -Recurse -Force -ErrorAction Stop -LiteralPath release }\""
+
+# The two shared validators, which nothing in this repo could reach before, so
+# nobody had run them: validate-notices checks THIRD-PARTY-NOTICES.md accounts
+# for everything the mod compiles in or vendors, validate-manifest checks the
+# built ZIP carries a launcher-manifest.json whose declared sources are all
+# actually in it.
+validate-notices = "node cameraunlock-core/scripts/validate-notices.mjs"
+validate-manifest = { cmd = "node cameraunlock-core/scripts/validate-manifest.mjs", depends-on = ["package"] }
+
+# The nightly dev-channel publish. Reachable as `pixi run release nightly` too;
+# named here so the task surface lists it.
+release-nightly = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-nightly.ps1"

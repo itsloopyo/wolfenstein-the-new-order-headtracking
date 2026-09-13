@@ -1,0 +1,25 @@
+{
+  "$comment": "The contract between this package and the Lopari launcher. Ships at the release ZIP root; scripts/package-release.ps1 stages it and scripts/release.ps1 stamps mod_info.version alongside the other version files. There is deliberately no mod.json - the launcher does not look for one. No `loader` block: Ultimate ASI Loader is vendored as a raw dinput8.dll and placed through `files` below, which is the canonical ASI wiring. WolfNewOrder_x64.exe sits at the game root, so both files land beside it, and dinput8 is a proxy that exe already imports - one it does not import is never loaded and the mod silently does nothing. Neither `archives` nor `detect` appears: an empty `archives` beside a non-empty `detect` declares a loader the launcher cannot provision, which its deploy engine refuses outright.",
+  "schema_version": 2,
+  "mod_info": {
+    "name": "WolfensteinTheNewOrderHeadTracking",
+    "version": "0.0.0",
+    "game_id": "wolfenstein-the-new-order"
+  },
+  "strategy": "AsiLoader",
+  "delivery_mode": "manifest",
+
+  "files": [
+    {
+      "source": "vendor/ultimate-asi-loader/dinput8.dll",
+      "target": "dinput8.dll"
+    },
+    {
+      "source": "plugins/WolfensteinTheNewOrderHeadTracking.asi",
+      "target": "WolfensteinTheNewOrderHeadTracking.asi"
+    }
+  ],
+
+  "runtime_requirements": [],
+  "dependencies": []
+}
