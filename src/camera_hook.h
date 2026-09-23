@@ -64,15 +64,14 @@ private:
     bool m_wrote = false;
     bool m_refusalLogged[static_cast<int>(RefusalKind::Count)] = {};
 
-    // The frame's field of view, read out of the render view and logged. The
-    // mod owns no FOV: the game has its own slider, and nothing this mod
-    // computes takes an FOV term, because a rotation and a translation of the
-    // eye do not. It is logged because it is half of what a frame was drawn
-    // with, and because a reticle - which this mod does not yet draw - is the
-    // one thing that would need it.
+    // The frame's field of view, read out of the render view. The mod owns no
+    // FOV: the game has its own slider. fov_y sets the zoom factor the head
+    // pose is scaled by, and the pair is logged because it is half of what a
+    // frame was drawn with.
     float m_fovX = 0.0f;
     float m_fovY = 0.0f;
     bool m_explicitProjection = false;
+    float m_zoomFactor = 1.0f;
 };
 
 }  // namespace wolf_ht

@@ -71,6 +71,13 @@ extern const BuildProfile kGdkProfile_20210413 = {
     0xF4D2E8u,  // idHands vtable
     24u,        // idHands::owner
     67596u,     // idPresentablePlayer::wantZoom
+
+    // The g_fov idCVar is registered at RVA 0x937A0 with the object at RVA
+    // 0x1D17D50, and its float at +0x2C is what the zoom code at RVA 0x610F0D
+    // loads into idPresentablePlayer::zoomFov's start value, as on Steam.
+    // idView::CalcFOV is at RVA 0x943200, and the thunk at RVA 0x9431F0 passes
+    // it the 16/9 at RVA 0xF5A54C.
+    0x1D17D7Cu, // g_fov value
     &kReticle,
 };
 

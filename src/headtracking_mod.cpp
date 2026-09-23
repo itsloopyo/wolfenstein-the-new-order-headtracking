@@ -4,6 +4,8 @@
 
 #include <windows.h>
 
+#include <cmath>
+
 #include "builds/build_registry.h"
 #include "camera_hook.h"
 #include "cameraunlock/math/angle_utils.h"
@@ -42,14 +44,14 @@ void HeadTrackingMod::LoadSettings() {
     // so a game directory can narrow to the name of a DIFFERENT directory that
     // exists and the INI is then read from and written to that one. Core
     // refuses instead, which lands on the no-INI path below.
-    m_exeDir = cameraunlock::os::HostExeDirectoryNarrow();
-    if (m_exeDir.empty()) {
+    const std::string exeDir = cameraunlock::os::HostExeDirectoryNarrow();
+    if (exeDir.empty()) {
         Log::Line("[mod] could not resolve the game directory in a form the INI reader can "
                   "use; built-in defaults are in use and HeadTracking.ini will not be read");
         return;
     }
-    WriteDefaultConfigIfMissing(m_exeDir);
-    LoadConfig(m_exeDir, m_config);
+    WriteDefaultConfigIfMissing(exeDir);
+    LoadConfig(exeDir, m_config);
 }
 
 // A hook that will not install on a build the mod DOES recognise leaves the
@@ -70,6 +72,8 @@ void HeadTrackingMod::InstallEngineHooks(const builds::BuildProfile& profile) {
     // running immediately after the line above told the player the mod was
     // dormant and the game unmodified.
     m_gameState = std::make_unique<GameState>(profile);
+    m_baseFov = reinterpret_cast<const float*>(
+        reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr)) + profile.g_fov_value_rva);
     const bool reticleInstalled = InstallReticleHook(profile, *this);
     if (profile.reticle && !reticleInstalled) return;
 
@@ -83,10 +87,6 @@ void HeadTrackingMod::Initialize() {
 
     m_enabled.store(m_config.enable_on_startup);
     m_worldSpaceYaw.store(m_config.world_space_yaw);
-    // Straight from the file, never overwritten by anything else at start-up:
-    // the ADS mode is the player's choice, and quietly resetting it on launch is
-    // the bug this ordering exists to avoid.
-    m_ads.Start(m_config.ads_mode);
 
     // Everything below this line modifies the running process in some way a
     // player can notice: a bound UDP port, a key poller, a hooked engine
@@ -105,30 +105,13 @@ void HeadTrackingMod::Initialize() {
     m_hotkeys = std::make_unique<Hotkeys>();
     m_hotkeys->Start(*this, m_config);
 
-    Log::Line("[mod] ready: tracking %s, yaw about %s, ADS mode %s",
+    Log::Line("[mod] ready: tracking %s, yaw about %s",
               m_enabled.load() ? "on" : "off",
-              m_worldSpaceYaw.load() ? "world up" : "the view axis",
-              cameraunlock::ads::AdsModeValue(m_ads.Mode()));
-    if (m_ads.Mode() == cameraunlock::ads::AdsMode::Marker) {
-        Log::Line("[mod] this build draws no aim marker yet, so ADS mode marker behaves as "
-                  "tracked - see the Controls section of README.md");
-    }
+              m_worldSpaceYaw.load() ? "world up" : "the view axis");
 }
 
 void HeadTrackingMod::LogVerdictChange(const GateVerdict& verdict) {
-    // The sights go up and down dozens of times in a firefight, and Log::Line
-    // takes a mutex and three WriteFile calls on the render thread. So the ADS
-    // suspension is announced once per session and then folded into the gameplay
-    // state: one line is enough to answer "tracking stops whenever I aim", which
-    // is the whole of what a paused ADS mode does, and a line per aim would bury
-    // every other transition in the file.
-    if (verdict.reason == GateReason::AdsPaused && !m_adsSuspensionReported) {
-        m_adsSuspensionReported = true;
-        Log::Line("[state] tracking suspended (%s). Reported once - the sights go up too often "
-                  "to log every time.", GateReasonText(GateReason::AdsPaused));
-    }
-    const GateReason reason =
-        verdict.reason == GateReason::AdsPaused ? GateReason::Gameplay : verdict.reason;
+    const GateReason reason = verdict.reason;
 
     // The first evaluation is reported as well as every change. Reporting only
     // changes leaves a session that never reaches gameplay with nothing in the
@@ -165,7 +148,6 @@ bool HeadTrackingMod::UpdateForFrame() {
     // frame is otherwise a gameplay frame - reading it through a level load
     // would be a pointer chase for an answer the walk is about to discard.
     inputs.aiming = inputs.gameplay && m_gameState->IsAiming();
-    inputs.ads_mode = m_ads.Mode();
 
     const GateVerdict verdict = EvaluateGate(inputs);
     LogVerdictChange(verdict);
@@ -174,56 +156,70 @@ bool HeadTrackingMod::UpdateForFrame() {
     m_feed.Update(poseApplies);
 
     if (!poseApplies) {
-        // Every suppression EXCEPT the sights being up, which does not land here
-        // - that one keeps the pose flowing so the fade can run it down. So this
-        // is unconditionally the "start the next aim clean" reset.
-        m_ads.Suppress();
+        m_leanFade.Reset();
         m_rotation.Invalidate();
         m_position.Invalidate();
         return false;
     }
 
-    cameraunlock::ads::AdsEntryPose::Pose absolute;
-    const bool rotationValid =
-        m_feed.GetRotationDegrees(absolute.yaw, absolute.pitch, absolute.roll);
-    const bool positionValid = m_feed.GetPositionOffset(absolute.x, absolute.y, absolute.z);
+    HeadPose pose;
+    const bool rotationValid = m_feed.GetRotationDegrees(pose.yaw, pose.pitch, pose.roll);
+    const bool positionValid = m_feed.GetPositionOffset(pose.x, pose.y, pose.z);
+    pose = m_leanFade.Apply(verdict.aiming, pose, GetTickCount64());
 
-    PublishPose(m_ads.Apply(verdict.aiming, rotationValid, absolute, GetTickCount64()),
-                rotationValid, positionValid);
+    m_rotation.Publish(pose.yaw, pose.pitch, pose.roll, rotationValid);
+    m_position.Publish(pose.x, pose.y, pose.z, positionValid);
     m_frameActive = true;
     return true;
 }
 
-bool HeadTrackingMod::BuildTrackedView(idtech::Vec3& origin, idtech::Mat3& axis) const {
+float HeadTrackingMod::ZoomFactorFor(float fovYDegrees) {
+    const float gFov = m_baseFov != nullptr ? *static_cast<const volatile float*>(m_baseFov)
+                                            : std::nanf("");
+    float factor = 1.0f;
+    if (!ZoomFactor(fovYDegrees, gFov, factor)) {
+        if (!m_zoomUnreadableLogged.exchange(true)) {
+            Log::Line("[zoom] no zoom compensation on a view with fov_y=%g, g_fov=%g; head "
+                      "movement is applied unscaled there. Reported once.", fovYDegrees, gFov);
+        }
+        return 1.0f;
+    }
+    // Every term, once, on the first hip view - which reads 1.0000, and anything
+    // else there means fov_y and g_fov are not related the way idView::CalcFOV
+    // relates them on this build. Then once more the first time a zoom engages.
+    // The band is tight because the opening sequence eases its FOV through the
+    // hip value: at 1% the basis line caught a 1.0094 frame of that ease.
+    const bool zoomed = std::fabs(factor - 1.0f) > 0.001f;
+    std::atomic<bool>& latch = zoomed ? m_zoomEngagedLogged : m_zoomBasisLogged;
+    if (!latch.exchange(true)) {
+        Log::Line("[zoom] %s: fov_y=%.3f deg (this view, full vertical), g_fov=%.3f deg "
+                  "(nominal, horizontal at %.4f:1), factor tan(fov_y/2)/(tan(g_fov/2)/%.4f)"
+                  "=%.4f", zoomed ? "first zoomed view" : "basis", fovYDegrees, gFov,
+                  kFovReferenceAspect, kFovReferenceAspect, factor);
+    }
+    return factor;
+}
+
+bool HeadTrackingMod::BuildTrackedView(idtech::Vec3& origin, idtech::Mat3& axis,
+                                       float zoomFactor) const {
+    HeadPose pose;
+    const bool haveRotation = m_rotation.Read(pose.yaw, pose.pitch, pose.roll);
+    const bool havePosition = m_position.Read(pose.x, pose.y, pose.z);
+    if (!haveRotation && !havePosition) return false;
+    pose = ScalePoseForZoom(pose, zoomFactor);
+
     const idtech::Mat3 cleanAxis = axis;
-    bool modified = false;
-    float yaw, pitch, roll;
-    if (GetRotationRadians(yaw, pitch, roll)) {
+    if (haveRotation) {
+        const float yaw = pose.yaw * kDegToRad;
+        const float pitch = pose.pitch * kDegToRad;
+        const float roll = pose.roll * kDegToRad;
         axis = IsWorldSpaceYaw() ? idtech::RotateBasisWorldYaw(cleanAxis, yaw, pitch, roll)
                                 : idtech::RotateBasisLocal(cleanAxis, yaw, pitch, roll);
-        modified = true;
     }
-    float forward, left, up;
-    if (GetPositionOffset(forward, left, up)) {
-        origin = idtech::TranslateAlongBasis(origin, cleanAxis, forward, left, up);
-        modified = true;
+    if (havePosition) {
+        origin = idtech::TranslateAlongBasis(origin, cleanAxis, pose.x, pose.y, pose.z);
     }
-    return modified;
-}
-
-void HeadTrackingMod::PublishPose(const cameraunlock::ads::AdsEntryPose::Pose& pose,
-                                  bool rotationValid, bool positionValid) {
-    m_rotation.Publish(pose.yaw * kDegToRad, pose.pitch * kDegToRad, pose.roll * kDegToRad,
-                       rotationValid);
-    m_position.Publish(pose.x, pose.y, pose.z, positionValid);
-}
-
-bool HeadTrackingMod::GetRotationRadians(float& yaw, float& pitch, float& roll) const {
-    return m_rotation.Read(yaw, pitch, roll);
-}
-
-bool HeadTrackingMod::GetPositionOffset(float& forward, float& left, float& up) const {
-    return m_position.Read(forward, left, up);
+    return true;
 }
 
 // The toggles log from here rather than from the hotkey handler, so a nav key
@@ -244,24 +240,6 @@ void HeadTrackingMod::ToggleYawMode() {
 void HeadTrackingMod::CycleTrackingMode() {
     m_feed.CycleMode();
     Log::Line("[mod] tracking mode -> %s", m_feed.ModeName());
-}
-
-void HeadTrackingMod::CycleAdsMode() {
-    const cameraunlock::ads::AdsMode next = m_ads.Cycle();
-    // Written back before it is announced, so what the player is told and what
-    // the file holds cannot disagree. This is the one setting the mod persists:
-    // the other three toggles are session state, this one is a choice.
-    SaveAdsMode(m_exeDir, next);
-    // The mod draws nothing on screen, so the log line is the toast. Its text is
-    // core's, unaltered, so the same three strings appear in every mod's log.
-    Log::Line("[mod] %s", cameraunlock::ads::AdsModeToast(next));
-    // The toast says an aim marker is shown. Nothing draws one in this build, so
-    // the caveat has to follow the toast every time the player lands on that
-    // mode, not only when the INI already read `marker` at start-up.
-    if (next == cameraunlock::ads::AdsMode::Marker) {
-        Log::Line("[mod] this build draws no aim marker yet, so ADS mode marker behaves as "
-                  "tracked - see the Controls section of README.md");
-    }
 }
 
 }  // namespace wolf_ht

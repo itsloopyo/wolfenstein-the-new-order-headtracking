@@ -51,8 +51,8 @@ struct BuildProfile {
     // render copy to the projection builder, which reads exactly these two and
     // builds the matrix from tan(fov/2) - so they are the FOV the frame is
     // actually drawn with, not a stored preference. The mod never writes them:
-    // the game has its own FOV slider, and the head pose is a rotation and a
-    // translation, neither of which takes an FOV term.
+    // the game has its own FOV slider. fov_y is read to scale the head pose to
+    // the zoom, against g_fov_value_rva below.
     std::uint32_t rv_fov_x_offset;
     std::uint32_t rv_fov_y_offset;
 
@@ -76,7 +76,7 @@ struct BuildProfile {
 
     // idPresentablePlayer's vtable, in .rdata. Like idGameLocal the object is
     // heap allocated with no global pointing at it, so this is what the runtime
-    // sweep keys on. It carries the aim-down-sights state the ADS modes read.
+    // sweep keys on. It carries the aim-down-sights state the lean fade reads.
     std::uint32_t presentable_player_vtable_rva;
 
     // idHands is an EMBEDDED member of idPresentablePlayer, not a separate
@@ -93,6 +93,12 @@ struct BuildProfile {
     // every path where zooming is not allowed. Polled once per frame, never
     // latched on an edge.
     std::uint32_t player_want_zoom_offset;
+
+    // The float value of the static idCVar g_fov, the game's own FOV setting in
+    // degrees: a nominal angle, horizontal at a 16:9 reference. The player view's
+    // FOV is this at the hip and narrows from it as the sights come up, so it is
+    // the base the zoom compensation measures a zoom against.
+    std::uint32_t g_fov_value_rva;
     const ReticleOffsets* reticle = nullptr;
 };
 

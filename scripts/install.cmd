@@ -42,7 +42,7 @@ set "MOD_SEED_FILES="
 :: omit the field. Bump alongside vendor/ via `pixi run update-deps`.
 set "ASI_LOADER_VERSION=9.7.4"
 :: Post-install help text. `&echo ` starts each further line.
-set "MOD_CONTROLS=Controls (nav cluster / chord):&echo   End      / Ctrl+Shift+Y  Toggle head tracking&echo   PageUp   / Ctrl+Shift+G  Cycle tracking mode: full, rotation only, position only&echo   PageDown / Ctrl+Shift+H  Toggle yaw mode: world-locked or camera-local&echo   Insert   / Ctrl+Shift+U  Cycle ADS mode: tracking paused, marker, tracked&echo.&echo Recentring is done in your tracker app, not in the game."
+set "MOD_CONTROLS=Controls (nav cluster / chord):&echo   End      / Ctrl+Shift+Y  Toggle head tracking&echo   PageUp   / Ctrl+Shift+G  Cycle tracking mode: full, rotation only, position only&echo   PageDown / Ctrl+Shift+H  Toggle yaw mode: world-locked or camera-local&echo.&echo Recentring is done in your tracker app, not in the game."
 :: --- END CONFIG BLOCK ---
 
 :: Pin delayed expansion off before `%*` is expanded on the `call` below.

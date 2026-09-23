@@ -29,7 +29,6 @@ void Hotkeys::Start(HeadTrackingMod& mod, const Config& config) {
     const auto toggle = [&mod]() { mod.ToggleEnabled(); };
     const auto cycleMode = [&mod]() { mod.CycleTrackingMode(); };
     const auto yawMode = [&mod]() { mod.ToggleYawMode(); };
-    const auto adsMode = [&mod]() { mod.CycleAdsMode(); };
 
     // The nav bindings are suppressed while Ctrl+Shift is held, so the chord
     // path is the sole trigger for a chord and a nav key rebound onto a chord
@@ -37,12 +36,10 @@ void Hotkeys::Start(HeadTrackingMod& mod, const Config& config) {
     m_poller.SetToggleKey(config.toggle_key, NavGuarded(toggle));
     m_poller.AddHotkey(config.cycle_mode_key, NavGuarded(cycleMode));
     m_poller.AddHotkey(config.yaw_mode_key, NavGuarded(yawMode));
-    m_poller.AddHotkey(config.ads_mode_key, NavGuarded(adsMode));
 
     m_poller.AddHotkey(config.chord_toggle_key, ChordGuarded(toggle));
     m_poller.AddHotkey(config.chord_cycle_mode_key, ChordGuarded(cycleMode));
     m_poller.AddHotkey(config.chord_yaw_mode_key, ChordGuarded(yawMode));
-    m_poller.AddHotkey(config.chord_ads_mode_key, ChordGuarded(adsMode));
 
     // Core's Start never returns false - it returns true early when already
     // running and true at the end - so the failure it does have is a rethrow
@@ -60,11 +57,10 @@ void Hotkeys::Start(HeadTrackingMod& mod, const Config& config) {
         return;
     }
     Log::Line("[hotkeys] toggle 0x%X / Ctrl+Shift+0x%X, cycle mode 0x%X / Ctrl+Shift+0x%X, "
-              "yaw mode 0x%X / Ctrl+Shift+0x%X, ADS mode 0x%X / Ctrl+Shift+0x%X",
+              "yaw mode 0x%X / Ctrl+Shift+0x%X",
               config.toggle_key, config.chord_toggle_key,
               config.cycle_mode_key, config.chord_cycle_mode_key,
-              config.yaw_mode_key, config.chord_yaw_mode_key,
-              config.ads_mode_key, config.chord_ads_mode_key);
+              config.yaw_mode_key, config.chord_yaw_mode_key);
 }
 
 }  // namespace wolf_ht

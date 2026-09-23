@@ -15,7 +15,6 @@
 #include "config_sanitize.h"
 #include "logging.h"
 
-#include "cameraunlock/ads/ads_mode.h"
 #include "cameraunlock/config/ini_reader.h"
 #include "cameraunlock/config/value_guards.h"
 #include "cameraunlock/protocol/port_utils.h"
@@ -38,11 +37,13 @@ constexpr char kDefaultIniText[] =
     ";           PgUp / Ctrl+Shift+G   cycle tracking mode (rotation and position\n"
     ";                                 / rotation only / position only)\n"
     ";           PgDn / Ctrl+Shift+H   yaw about world up / about the view axis\n"
-    ";           Ins  / Ctrl+Shift+U   cycle what tracking does down the sights\n"
     ";\n"
     "; There is no recenter key. Centre your head in your tracker (OpenTrack's\n"
     "; Center bind, or your phone app's CENTER button) - this mod uses the pose it\n"
     "; is sent, exactly as sent, so one centre anywhere is the whole story.\n"
+    ";\n"
+    "; Head tracking stays on while you aim down sights; leaning eases out while\n"
+    "; the sights are up. Nothing about aiming is a setting.\n"
     ";\n"
     "; Field of view is a game setting, not a mod setting. Wolfenstein has its own\n"
     "; Field of View slider under Options > Video. This mod rotates and moves the\n"
@@ -57,32 +58,18 @@ constexpr char kDefaultIniText[] =
     "; 1 = head yaw turns about world up, so a glance left stays level while you\n"
     "; are looking up or down a stairwell. 0 = yaw turns about the view axis.\n"
     "WorldSpaceYaw=1\n"
-    "; What head tracking does while the iron sights or a scope are up. Cycled in\n"
-    "; game with Ins / Ctrl+Shift+U, and the key writes your choice back here.\n"
-    ";   paused   the game keeps the camera for as long as the sights are up,\n"
-    ";            apart from head roll, which stays live so the horizon still\n"
-    ";            tilts with your head.\n"
-    ";   marker   tracking carries on. This build draws no aim marker, so it\n"
-    ";            behaves exactly as tracked.\n"
-    ";   tracked  tracking carries on, nothing drawn.\n"
-    "; All three start the same way: the head pose comes off the camera as the\n"
-    "; sights come up, so the frame settles onto the game's own aim. Anything\n"
-    "; else here reads as paused.\n"
-    "AdsMode=paused\n"
     "\n"
     "[Hotkeys]\n"
     "; Windows virtual key codes, in hex. Each action has a nav-cluster key and a\n"
     "; Ctrl+Shift+<key> chord, and both fire it - remap either or both.\n"
-    "; Common codes: End 0x23, Insert 0x2D, Delete 0x2E, PgUp 0x21, PgDn 0x22,\n"
+    "; Common codes: End 0x23, Delete 0x2E, PgUp 0x21, PgDn 0x22,\n"
     "; F1-F12 0x70-0x7B, A-Z 0x41-0x5A, numpad 0-9 0x60-0x69.\n"
     "ToggleKey=0x23\n"
     "CycleModeKey=0x21\n"
     "YawModeKey=0x22\n"
-    "AdsModeKey=0x2D\n"
     "ChordToggleKey=0x59\n"
     "ChordCycleModeKey=0x47\n"
     "ChordYawModeKey=0x48\n"
-    "ChordAdsModeKey=0x55\n"
     "\n"
     "; Head movement is used exactly as your tracker sends it. There is no\n"
     "; sensitivity, deadzone or axis inversion here on purpose: set those in\n"
@@ -408,20 +395,6 @@ void ReadNetworkSection(const cameraunlock::IniReader& ini, Config& out) {
 void ReadGeneralSection(const cameraunlock::IniReader& ini, Config& out) {
     out.enable_on_startup = ReadFlag(ini, "General", "EnableOnStartup", out.enable_on_startup);
     out.world_space_yaw   = ReadFlag(ini, "General", "WorldSpaceYaw",   out.world_space_yaw);
-
-    // Core owns the parse, so the three value strings have exactly one
-    // definition across the fleet and a config written by a sibling mod means
-    // the same thing here. It answers anything it does not recognise with the
-    // default rather than with whichever branch is last, so a typo lands on
-    // stock ADS; the line below is only so the player can see it happen.
-    const std::string adsText = ini.ReadString("General", "AdsMode", "");
-    if (!adsText.empty()) {
-        out.ads_mode = cameraunlock::ads::ParseAdsMode(adsText.c_str());
-        if (adsText != cameraunlock::ads::AdsModeValue(out.ads_mode)) {
-            Log::Line("[config] AdsMode=%s is not paused, marker or tracked; using %s",
-                      adsText.c_str(), cameraunlock::ads::AdsModeValue(out.ads_mode));
-        }
-    }
 }
 
 struct Binding {
@@ -453,23 +426,19 @@ void ReadHotkeysSection(const cameraunlock::IniReader& ini, Config& out) {
     out.toggle_key            = ReadKey(ini, "ToggleKey",         out.toggle_key);
     out.cycle_mode_key        = ReadKey(ini, "CycleModeKey",      out.cycle_mode_key);
     out.yaw_mode_key          = ReadKey(ini, "YawModeKey",        out.yaw_mode_key);
-    out.ads_mode_key          = ReadKey(ini, "AdsModeKey",        out.ads_mode_key);
     out.chord_toggle_key      = ReadKey(ini, "ChordToggleKey",    out.chord_toggle_key);
     out.chord_cycle_mode_key  = ReadKey(ini, "ChordCycleModeKey", out.chord_cycle_mode_key);
     out.chord_yaw_mode_key    = ReadKey(ini, "ChordYawModeKey",   out.chord_yaw_mode_key);
-    out.chord_ads_mode_key    = ReadKey(ini, "ChordAdsModeKey",   out.chord_ads_mode_key);
 
     const Binding nav[] = {
         {"ToggleKey", out.toggle_key},
         {"CycleModeKey", out.cycle_mode_key},
         {"YawModeKey", out.yaw_mode_key},
-        {"AdsModeKey", out.ads_mode_key},
     };
     const Binding chord[] = {
         {"ChordToggleKey", out.chord_toggle_key},
         {"ChordCycleModeKey", out.chord_cycle_mode_key},
         {"ChordYawModeKey", out.chord_yaw_mode_key},
-        {"ChordAdsModeKey", out.chord_ads_mode_key},
     };
     WarnAboutCollidingHotkeys(nav, sizeof(nav) / sizeof(nav[0]));
     WarnAboutCollidingHotkeys(chord, sizeof(chord) / sizeof(chord[0]));
@@ -544,25 +513,6 @@ void WriteDefaultConfigIfMissing(const std::string& exe_dir) {
                   "delete it and restart the game for a complete default config.",
                   path.c_str(), written, kTextBytes, writeError);
     }
-}
-
-void SaveAdsMode(const std::string& exe_dir, cameraunlock::ads::AdsMode mode) {
-    const char* value = cameraunlock::ads::AdsModeValue(mode);
-    if (exe_dir.empty()) {
-        Log::Line("[config] the game directory could not be resolved, so AdsMode=%s applies to "
-                  "this session only", value);
-        return;
-    }
-
-    // WritePrivateProfileString rather than a rewrite of the whole file: it
-    // replaces the one key in place and leaves every comment, every other
-    // setting and the section order exactly as the player left them. A file the
-    // mod rewrote wholesale would quietly discard anything it did not recognise.
-    const std::string path = IniPath(exe_dir);
-    if (WritePrivateProfileStringA("General", "AdsMode", value, path.c_str())) return;
-
-    Log::Line("[config] AdsMode=%s could not be written to %s (%lu); it applies to this session "
-              "but will not survive a restart", value, path.c_str(), GetLastError());
 }
 
 }  // namespace wolf_ht

@@ -58,17 +58,20 @@ void Prepare(void* hud, void* view, int renderTime, HeadTrackingMod& mod) {
     g_context.description = *reinterpret_cast<void**>(reinterpret_cast<std::uintptr_t>(hud) + 0x6C8);
     const auto cleanOrigin = *reinterpret_cast<const idtech::Vec3*>(cleanView + 0x60);
     const auto cleanAxis = *reinterpret_cast<const idtech::Mat3*>(cleanView + 0x6C);
+    const float fovX = *reinterpret_cast<const float*>(cleanView + 0x10);
+    const float fovY = *reinterpret_cast<const float*>(cleanView + 0x14);
+    const bool explicitProjection = *reinterpret_cast<const unsigned char*>(cleanView + 0x5C) != 0;
     idtech::Vec3 origin = cleanOrigin;
     idtech::Mat3 axis = cleanAxis;
-    if (!mod.BuildTrackedView(origin, axis)) return;
+    if (!mod.BuildTrackedView(origin, axis,
+                              mod.ZoomFactorFor(explicitProjection ? std::nanf("") : fovY))) {
+        return;
+    }
     g_context.apply = true;
 
     const auto clientGame = *reinterpret_cast<const std::uintptr_t*>(
         g_base + g_offsets->client_game_pointer_rva);
     const auto passEntity = *reinterpret_cast<const std::uintptr_t*>(player + 0x10AB8);
-    const float fovX = *reinterpret_cast<const float*>(cleanView + 0x10);
-    const float fovY = *reinterpret_cast<const float*>(cleanView + 0x14);
-    const bool explicitProjection = *reinterpret_cast<const unsigned char*>(cleanView + 0x5C) != 0;
     const float width = reinterpret_cast<DimensionFn>(g_base + g_offsets->view_width_rva)(view);
     const float height = reinterpret_cast<DimensionFn>(g_base + g_offsets->view_height_rva)(view);
     static ULONGLONG lastLog = 0;
@@ -176,10 +179,13 @@ void __fastcall Markers(void* player, int time) {
     auto* axis = reinterpret_cast<idtech::Mat3*>(view + 0x8C);
     const idtech::Vec3 cleanOrigin = *origin;
     const idtech::Mat3 cleanAxis = *axis;
+    const float fovY = *reinterpret_cast<const float*>(view + 0x34);
+    const bool explicitProjection = *reinterpret_cast<const unsigned char*>(view + 0x7C) != 0;
     idtech::Vec3 trackedOrigin = cleanOrigin;
     idtech::Mat3 trackedAxis = cleanAxis;
     if (!idtech::IsFinite3(&cleanOrigin.x) || !idtech::IsOrthonormal(cleanAxis) ||
-        !mod->BuildTrackedView(trackedOrigin, trackedAxis) ||
+        !mod->BuildTrackedView(trackedOrigin, trackedAxis,
+                               mod->ZoomFactorFor(explicitProjection ? std::nanf("") : fovY)) ||
         !idtech::IsFinite3(&trackedOrigin.x) || !idtech::IsOrthonormal(trackedAxis)) {
         original(player, time);
         return;

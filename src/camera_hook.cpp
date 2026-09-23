@@ -5,6 +5,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 
 #include "cameraunlock/hooks/hook_manager.h"
@@ -142,6 +143,7 @@ void CameraHook::PreSetup(void* renderView, int renderWidth, int renderHeight) {
     m_renderOrigin = m_cleanOrigin;
     m_renderAxis = m_cleanAxis;
     m_wrote = false;
+    m_zoomFactor = 1.0f;
 
     const bool active = m_mod->UpdateForFrame();
     const bool cleanUsable =
@@ -159,9 +161,12 @@ void CameraHook::PreSetup(void* renderView, int renderWidth, int renderHeight) {
         return;
     }
 
+    // An explicit projection matrix means fov_x is not what this frame is drawn
+    // with, so there is no zoom to measure and the pose goes on unscaled.
+    m_zoomFactor = m_mod->ZoomFactorFor(m_explicitProjection ? std::nanf("") : m_fovY);
     idtech::Vec3 renderOrigin = m_cleanOrigin;
     idtech::Mat3 renderAxis = m_cleanAxis;
-    if (m_mod->BuildTrackedView(renderOrigin, renderAxis)) {
+    if (m_mod->BuildTrackedView(renderOrigin, renderAxis, m_zoomFactor)) {
         if (idtech::IsOrthonormal(renderAxis) && idtech::IsFinite3(&renderOrigin.x)) {
             *org = renderOrigin;
             *axis = renderAxis;
@@ -217,13 +222,13 @@ void CameraHook::LogFrame(bool active, int renderWidth, int renderHeight) {
         std::snprintf(fov, sizeof(fov), "%.2fx%.2f", m_fovX, m_fovY);
     }
     Log::Line("[camera] %s org=(%.1f %.1f %.1f) fwd=(%.3f %.3f %.3f) -> "
-              "org=(%.1f %.1f %.1f) fwd=(%.3f %.3f %.3f) %dx%d fov=%s",
+              "org=(%.1f %.1f %.1f) fwd=(%.3f %.3f %.3f) %dx%d fov=%s zoom=%.4f",
               active ? "active" : "idle",
               m_cleanOrigin.x, m_cleanOrigin.y, m_cleanOrigin.z,
               m_cleanAxis.m[0], m_cleanAxis.m[1], m_cleanAxis.m[2],
               m_renderOrigin.x, m_renderOrigin.y, m_renderOrigin.z,
               m_renderAxis.m[0], m_renderAxis.m[1], m_renderAxis.m[2],
-              renderWidth, renderHeight, fov);
+              renderWidth, renderHeight, fov, m_zoomFactor);
 }
 
 }  // namespace wolf_ht

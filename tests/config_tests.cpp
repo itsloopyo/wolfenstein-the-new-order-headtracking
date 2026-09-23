@@ -36,7 +36,6 @@ namespace {
 using checks::Check;
 using checks::CheckNear;
 
-using cameraunlock::ads::AdsMode;
 using wolf_ht::Config;
 
 const wchar_t* const kLogPathWide = L"config_tests.log";
@@ -104,13 +103,10 @@ Config Poisoned() {
     c.toggle_key = 0x41;
     c.cycle_mode_key = 0x42;
     c.yaw_mode_key = 0x43;
-    c.ads_mode_key = 0x44;
     c.chord_toggle_key = 0x45;
     c.chord_cycle_mode_key = 0x46;
     c.chord_yaw_mode_key = 0x49;
-    c.chord_ads_mode_key = 0x4A;
     c.world_space_yaw = false;
-    c.ads_mode = AdsMode::Tracked;
     c.local_smoothing = 0.77f;
     c.remote_smoothing = 0.88f;
     c.position_enabled = false;
@@ -138,20 +134,16 @@ void TestShippedDefaultIniReproducesTheBuiltInDefaults() {
           "default INI: EnableOnStartup is the built-in default");
     Check(loaded.world_space_yaw == d.world_space_yaw,
           "default INI: WorldSpaceYaw is the built-in default");
-    Check(loaded.ads_mode == d.ads_mode, "default INI: AdsMode is the built-in default");
     Check(loaded.toggle_key == d.toggle_key, "default INI: ToggleKey is the built-in default");
     Check(loaded.cycle_mode_key == d.cycle_mode_key,
           "default INI: CycleModeKey is the built-in default");
     Check(loaded.yaw_mode_key == d.yaw_mode_key, "default INI: YawModeKey is the built-in default");
-    Check(loaded.ads_mode_key == d.ads_mode_key, "default INI: AdsModeKey is the built-in default");
     Check(loaded.chord_toggle_key == d.chord_toggle_key,
           "default INI: ChordToggleKey is the built-in default");
     Check(loaded.chord_cycle_mode_key == d.chord_cycle_mode_key,
           "default INI: ChordCycleModeKey is the built-in default");
     Check(loaded.chord_yaw_mode_key == d.chord_yaw_mode_key,
           "default INI: ChordYawModeKey is the built-in default");
-    Check(loaded.chord_ads_mode_key == d.chord_ads_mode_key,
-          "default INI: ChordAdsModeKey is the built-in default");
     CheckNear(loaded.local_smoothing, d.local_smoothing, 1e-6f,
               "default INI: LocalSmoothing is the built-in default");
     CheckNear(loaded.remote_smoothing, d.remote_smoothing, 1e-6f,
@@ -175,21 +167,18 @@ void TestTheDefaultBindingsAreTheOnesTheControlsTableNames() {
     Check(d.toggle_key == 0x23, "toggle is End (0x23)");
     Check(d.cycle_mode_key == 0x21, "cycle tracking mode is Page Up (0x21)");
     Check(d.yaw_mode_key == 0x22, "toggle yaw mode is Page Down (0x22)");
-    Check(d.ads_mode_key == 0x2D, "cycle ADS mode is Insert (0x2D)");
 
     // The chord cluster, in the action order the table fixes so the same action
     // lands on the same chord in every mod.
     Check(d.chord_toggle_key == 0x59, "toggle chord is Ctrl+Shift+Y");
     Check(d.chord_cycle_mode_key == 0x47, "cycle-mode chord is Ctrl+Shift+G");
     Check(d.chord_yaw_mode_key == 0x48, "yaw-mode chord is Ctrl+Shift+H");
-    Check(d.chord_ads_mode_key == 0x55, "ADS-mode chord is Ctrl+Shift+U");
 
     // Home and Ctrl+Shift+T were the recenter pair before mods stopped keeping a
     // centre. Binding either to something else fires on muscle memory, so they
     // stay free.
-    const int nav[] = {d.toggle_key, d.cycle_mode_key, d.yaw_mode_key, d.ads_mode_key};
-    const int chord[] = {d.chord_toggle_key, d.chord_cycle_mode_key, d.chord_yaw_mode_key,
-                         d.chord_ads_mode_key};
+    const int nav[] = {d.toggle_key, d.cycle_mode_key, d.yaw_mode_key};
+    const int chord[] = {d.chord_toggle_key, d.chord_cycle_mode_key, d.chord_yaw_mode_key};
     bool homeFree = true, chordTFree = true;
     for (int key : nav) {
         if (key == 0x24) homeFree = false;
@@ -199,6 +188,18 @@ void TestTheDefaultBindingsAreTheOnesTheControlsTableNames() {
     }
     Check(homeFree, "Home (0x24) is left unbound - it was the recenter key");
     Check(chordTFree, "Ctrl+Shift+T (0x54) is left unbound - it was the recenter chord");
+
+    // Insert and Ctrl+Shift+U cycled the retired ADS modes. Aiming is not a
+    // setting any more, so neither is bound to anything.
+    bool insertFree = true, chordUFree = true;
+    for (int key : nav) {
+        if (key == 0x2D) insertFree = false;
+    }
+    for (int key : chord) {
+        if (key == 0x55) chordUFree = false;
+    }
+    Check(insertFree, "Insert (0x2D) is left unbound - it cycled the retired ADS modes");
+    Check(chordUFree, "Ctrl+Shift+U (0x55) is left unbound - it cycled the retired ADS modes");
 }
 
 void TestAnExistingConfigIsNeverOverwritten() {
@@ -215,7 +216,7 @@ void TestAMissingConfigLeavesEveryValueAlone() {
     const std::string dir = CaseDir("absent");
     Config c = Poisoned();
     wolf_ht::LoadConfig(dir, c);
-    Check(c.udp_port == 1234 && c.limit_x == 0.11f && c.ads_mode == AdsMode::Tracked,
+    Check(c.udp_port == 1234 && c.limit_x == 0.11f,
           "a missing HeadTracking.ini leaves every value exactly as it was");
 }
 
@@ -330,15 +331,24 @@ void TestHotkeyCodesAreReadAsHexAndRangeChecked() {
           "a trailing comment on a key code is allowed");
 }
 
-// ---- ADS mode ---------------------------------------------------------------
+// ---- A config written by an older release -------------------------------------
 
-void TestAdsModeFallsBackToStockAds() {
-    Check(Load("ads_tracked", "[General]\nAdsMode=tracked\n").ads_mode == AdsMode::Tracked,
-          "a known AdsMode value is read");
-    Config seed;
-    seed.ads_mode = AdsMode::Tracked;
-    Check(Load("ads_junk", "[General]\nAdsMode=wibble\n", seed).ads_mode == AdsMode::Paused,
-          "an unknown AdsMode lands on stock ADS, not on tracking through the irons");
+// Earlier releases wrote AdsMode, AdsModeKey and ChordAdsModeKey. Those keys
+// mean nothing now: they are read by nobody, and the file around them loads
+// exactly as it would without them. TestEveryRefusalIsInTheLog checks nothing
+// was said about them.
+void TestARetiredAdsConfigLoadsCleanly() {
+    const Config c = Load("ads_retired",
+                          "[General]\nWorldSpaceYaw=0\nAdsMode=tracked\n"
+                          "[Hotkeys]\nToggleKey=0x71\nAdsModeKey=0x2D\nChordAdsModeKey=0x55\n");
+    Check(!c.world_space_yaw, "a key beside a retired AdsMode is still read");
+    Check(c.toggle_key == 0x71, "a binding beside a retired AdsModeKey is still read");
+    const Config d;
+    Check(c.cycle_mode_key == d.cycle_mode_key && c.yaw_mode_key == d.yaw_mode_key &&
+              c.chord_toggle_key == d.chord_toggle_key &&
+              c.chord_cycle_mode_key == d.chord_cycle_mode_key &&
+              c.chord_yaw_mode_key == d.chord_yaw_mode_key,
+          "the retired ADS keys move no other binding");
 }
 
 // ---- File shape --------------------------------------------------------------
@@ -392,7 +402,9 @@ void TestEveryRefusalIsInTheLog(const std::string& log) {
     CheckLogSays(log, "is not a key that can be bound", "an unbindable key code is logged");
     CheckLogSays(log, "is not 0 or 1", "a bool that matched nothing is logged");
     CheckLogSays(log, "has been retired and is IGNORED", "the retired smoothing key is logged");
-    CheckLogSays(log, "is not paused, marker or tracked", "an unknown AdsMode is logged");
+    CheckLogSaysNot(log, "AdsMode",
+                    "a config from an older release loads without a word about AdsMode");
+    CheckLogSaysNot(log, "0x2D", "the retired AdsModeKey collides with nothing and is not reported");
     CheckLogSays(log, "more than one [Position] section", "a duplicated section is logged");
     CheckLogSays(log, "using built-in defaults", "a missing INI is logged");
 }
@@ -427,7 +439,7 @@ int main() {
     TestPositionLimitsAreClamped();
     TestBoolWithATrailingCommentKeepsThePreviousValue();
     TestHotkeyCodesAreReadAsHexAndRangeChecked();
-    TestAdsModeFallsBackToStockAds();
+    TestARetiredAdsConfigLoadsCleanly();
     TestOnlyTheFirstOfADuplicatedSectionIsRead();
     TestANonNumericValueWithNoCommaKeepsTheValue();
 

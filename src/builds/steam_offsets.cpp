@@ -77,6 +77,15 @@ extern const BuildProfile kSteamProfile_20140618 = {
     0x1022F38u, // idHands vtable
     24u,        // idHands::owner
     67596u,     // idPresentablePlayer::wantZoom
+
+    // g_fov is a static idCVar registered at RVA 0xBB6AF0 ("g_fov", "80",
+    // "camera field of view") with the object at RVA 0x1DA59D0. The game reads
+    // its float at +0x2C directly: the getter at RVA 0x60A210 returns it, and
+    // the zoom start and stop at RVA 0x60CE30 load it as the start and end of
+    // idPresentablePlayer::zoomFov, the interpolation fov_x follows through the
+    // sights. idView::CalcFOV (RVA 0x95EF00, reached through the thunk at RVA
+    // 0x9622A0 that passes 16/9) turns that nominal angle into fov_y.
+    0x1DA59FCu, // g_fov value
     &kReticle,
 };
 

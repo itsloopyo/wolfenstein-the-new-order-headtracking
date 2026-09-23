@@ -41,7 +41,6 @@ public:
     // SetMode does more than store an atomic - stepping into RotationOnly also
     // resets the position processor's smoothing and the position interpolator,
     // which are plain floats the render thread may be inside at that moment.
-    // Arming instead is the same shape AdsController already uses for its mode.
     void CycleMode();
     const char* ModeName() const;
 

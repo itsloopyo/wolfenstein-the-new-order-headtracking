@@ -109,7 +109,6 @@ Every action has two bindings that do the same thing, so use whichever your keyb
 | Toggle tracking | `End` | `Ctrl+Shift+Y` |
 | Cycle tracking mode | `Page Up` | `Ctrl+Shift+G` |
 | Toggle yaw mode | `Page Down` | `Ctrl+Shift+H` |
-| Cycle ADS mode | `Insert` | `Ctrl+Shift+U` |
 
 `Page Up` / `Ctrl+Shift+G` cycles tracking mode:
 
@@ -120,29 +119,13 @@ Every action has two bindings that do the same thing, so use whichever your keyb
 
 `Page Down` / `Ctrl+Shift+H` switches head yaw between turning about world up and turning about the view axis.
 
-`Insert` / `Ctrl+Shift+U` cycles what happens when you aim down sights. All
-three start the same way - raising the sights takes head rotation and lean off
-the camera so the frame settles onto the game's own aim - and they differ in what
-happens for the rest of the aim. Head roll is the exception and stays live in all
-three, so the horizon keeps tilting with your head:
+### Aiming down sights
 
-1. **Tracking paused** (default) - the game keeps the camera for as long as the
-   sights are up. Turning or leaning your head does nothing until you lower the
-   weapon; only head roll still reaches the view.
-2. **Tracking on, with an aim marker** - head tracking carries on from the
-   snapped position, and the mod's own marker is authoritative over any sight
-   picture, scoped weapons included: a scope's built-in reticle is only accurate
-   while your eye is exactly aligned with the optic, which is the alignment head
-   tracking breaks, so the two separate as soon as you move your view off that
-   sight line. **This build draws no marker.** So this position currently
-   behaves exactly like 3, and with the sights up nothing on screen tells you
-   where the rounds are going. It is in the cycle because Wolfenstein hides its
-   crosshair down the sights and needs one, not because it works yet.
-3. **Tracking on, no aim marker** - the same as 2 without the marker, for a
-   cleaner screen when you are happy reading the sights themselves.
-
-The choice is saved to `HeadTracking.ini`, so it survives a restart. Pressing
-the key writes the mode it switched to into `HeadTracking.log`.
+Head tracking stays on while you aim. The weapon stays where your mouse or
+controller points it, so with your head turned it sits off to one side with its
+sights still lined up, and your rounds land where those sights point. Head
+movement is scaled to the zoom, so a scope does not magnify it. Leaning eases
+out while the sights are up, because it would move your eye off them.
 
 ## Windowed play
 
@@ -168,24 +151,18 @@ EnableOnStartup=1
 ; 1 = head yaw turns about world up, so a glance left stays level while you
 ; are looking up or down a stairwell. 0 = yaw turns about the view axis.
 WorldSpaceYaw=1
-; What head tracking does while the iron sights or a scope are up: paused,
-; marker or tracked. See Controls above. Cycled in game with Ins /
-; Ctrl+Shift+U, and the key writes your choice back here.
-AdsMode=paused
 
 [Hotkeys]
 ; Windows virtual key codes, in hex. Each action has a nav-cluster key and a
 ; Ctrl+Shift+<key> chord, and both fire it - remap either or both.
-; Common codes: End 0x23, Insert 0x2D, Delete 0x2E, PgUp 0x21, PgDn 0x22,
+; Common codes: End 0x23, Delete 0x2E, PgUp 0x21, PgDn 0x22,
 ; F1-F12 0x70-0x7B, A-Z 0x41-0x5A, numpad 0-9 0x60-0x69.
 ToggleKey=0x23
 CycleModeKey=0x21
 YawModeKey=0x22
-AdsModeKey=0x2D
 ChordToggleKey=0x59
 ChordCycleModeKey=0x47
 ChordYawModeKey=0x48
-ChordAdsModeKey=0x55
 
 [Rotation]
 ; Smoothing covers rotation and position alike, and the value used is picked
@@ -203,9 +180,8 @@ LimitZ=0.40
 LimitZBack=0.10
 ```
 
-`AdsMode` is the one setting the mod writes back to this file, because the
-`Insert` key changes it. Everything else here is read at launch and never
-touched again.
+Everything here is read at launch, and the mod never writes to this file after
+creating it.
 
 The tracker owns the shape of the pose, so set sensitivity, deadzone and axis
 inversion in OpenTrack or your phone app once and every game behaves the same
@@ -245,6 +221,10 @@ The mod writes `HeadTracking.log` next to `WolfNewOrder_x64.exe`, starting a fre
 - Fix it in the tracker, not in the game. This mod has no axis-inversion setting on purpose: OpenTrack's Mapping tab inverts an axis for every game at once, so one change there covers everything. If you send from a phone app instead, look for the equivalent in its own settings.
 - Check you mapped the axes you meant, and that a leftover profile is not driving yaw from head roll.
 - If an axis is still wrong with a correctly configured tracker, that is a bug in the mod. Please report it.
+
+**The weapon is off to one side when I aim down sights**
+
+- Your head is turned: the weapon stays on your aim and you are looking past it. Turn back to it, or move your aim to where you are looking.
 
 **Yaw feels wrong when looking up or down at extreme angles**
 
