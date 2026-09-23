@@ -12,7 +12,7 @@ An unofficial head tracking mod for Wolfenstein: The New Order that moves the vi
 
 ## Requirements
 
-- A purchased copy of Wolfenstein: The New Order, on [Steam](https://store.steampowered.com/app/201810/) or Xbox Game Pass / Microsoft Store
+- A purchased copy of Wolfenstein: The New Order, on [Steam](https://store.steampowered.com/app/201810/) or Xbox Game Pass
 - A tracking source: [OpenTrack](https://github.com/opentrack/opentrack/releases), or any app that sends the OpenTrack UDP protocol
 - 64-bit Windows 10 or 11
 
@@ -40,7 +40,7 @@ $env:WOLFENSTEIN_THE_NEW_ORDER_PATH = "D:\Games\Wolfenstein.The.New.Order"
 ```
 
 `install.cmd` installs into one copy of the game. If you own it on both Steam
-and Game Pass it picks the Steam one, so run it a second time with the other
+and Xbox Game Pass it picks the Steam one, so run it a second time with the other
 folder as the argument to cover both:
 
 ```powershell
@@ -53,7 +53,7 @@ The installer ZIP holds `plugins/WolfensteinTheNewOrderHeadTracking.asi`, `vendo
 
 To place the files by hand:
 
-1. Copy `vendor/ultimate-asi-loader/dinput8.dll` into the game folder, next to `WolfNewOrder_x64.exe`. On Steam that is `<Steam library>\steamapps\common\Wolfenstein.The.New.Order\`; on Game Pass it is the package folder, `<drive>:\XboxGames\Wolfenstein- The New Order (PC)\Content\`. No rename is needed: that executable already imports `dinput8.dll`, so the loader is picked up under its own filename.
+1. Copy `vendor/ultimate-asi-loader/dinput8.dll` into the game folder, next to `WolfNewOrder_x64.exe`. On Steam that is `<Steam library>\steamapps\common\Wolfenstein.The.New.Order\`; on Xbox Game Pass it is the package folder, `<drive>:\XboxGames\Wolfenstein- The New Order (PC)\Content\`. No rename is needed: that executable already imports `dinput8.dll`, so the loader is picked up under its own filename.
 2. Copy `plugins/WolfensteinTheNewOrderHeadTracking.asi` into the same folder.
 3. Launch the game.
 
