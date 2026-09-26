@@ -20,7 +20,7 @@ build = { cmd = "cmake --build build --config Release", depends-on = ["setup"] }
 
 # The installer ZIP from the build output. No Nexus ZIP: see the notes at the
 # top of scripts/package-release.ps1 for why this mod is installer-only.
-package = { cmd = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1", depends-on = ["build"] }
+package = { cmd = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1", depends-on = ["build", "test"] }
 
 # Build + deploy into the detected game install (the dev loop).
 install = { cmd = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deploy.ps1", depends-on = ["build"] }
@@ -44,11 +44,17 @@ test-aimprojection = { cmd = "build/Release/aim_projection_tests.exe", depends-o
 test-windowplacement = { cmd = "build/Release/window_placement_tests.exe", depends-on = ["build"] }
 test-ads = { cmd = "build/Release/ads_tests.exe", depends-on = ["build"] }
 test-config = { cmd = "build/Release/config_tests.exe", depends-on = ["build"] }
+test-legacyreader = { cmd = "build/Release/legacy_reader_tests.exe", depends-on = ["build"] }
+# The config differential test proves nothing once a file it compiles has moved, so the
+# provenance check runs first. It then holds the frozen HeadTracking.ini reader to the published
+# build's on every input (comparison 1).
+test-configprovenance = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-differential-provenance.ps1"
+test-configdifferential = { cmd = "build/Release/config_differential_tests.exe", depends-on = ["build", "test-configprovenance"] }
 # Binds real loopback sockets and sleeps through several retry periods, so it is
 # the slow one (~10s). It stays in `test` regardless: the thing it measures is a
 # duration a player waits, and nothing else in the suite would notice it growing.
 test-trackerrecovery = { cmd = "build/Release/tracker_feed_recovery_tests.exe", depends-on = ["build"] }
-test = { depends-on = ["test-modproject", "test-releasesupport", "test-cameramath", "test-aimprojection", "test-windowplacement", "test-ads", "test-config", "test-trackerrecovery"] }
+test = { depends-on = ["test-modproject", "test-releasesupport", "test-cameramath", "test-aimprojection", "test-windowplacement", "test-ads", "test-config", "test-legacyreader", "test-configdifferential", "test-trackerrecovery"] }
 
 # Test-Path per directory rather than -ErrorAction SilentlyContinue. The flag
 # was there to tolerate an absent directory, but it also swallows a locked one -

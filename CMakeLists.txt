@@ -27,6 +27,7 @@ add_library(WolfensteinTheNewOrderHeadTracking SHARED
     src/dllmain.cpp
     src/logging.cpp
     src/config.cpp
+    src/legacy_config/legacy_config.cpp
     src/hotkeys.cpp
     src/tracker_feed.cpp
     src/headtracking_mod.cpp
@@ -115,19 +116,92 @@ if(MSVC)
 endif()
 add_test(NAME ads COMMAND ads_tests)
 
-# HeadTracking.ini is the only text the mod reads that it did not write, so the
-# loader is its input boundary: what it accepts, what it refuses, what it puts
-# in place of a refusal, and that the refusal is logged rather than swallowed.
-# It also carries the config_defaults check src/config.cpp names - the shipped
-# default file loaded back over a poisoned Config - which is what stops that
-# text and the Config member initialisers drifting apart.
-add_executable(config_tests tests/config_tests.cpp src/config.cpp)
+# The default HeadTracking.ini the mod writes on a first launch and the runtime
+# Config it loads into. It carries the config_defaults check src/config.cpp
+# names - the shipped default file read back through the frozen reader over a
+# poisoned Config - which is what stops that text and the Config member
+# initialisers drifting apart.
+add_executable(config_tests tests/config_tests.cpp src/config.cpp src/legacy_config/legacy_config.cpp)
 target_include_directories(config_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(config_tests PRIVATE cameraunlock)
 if(MSVC)
     target_compile_options(config_tests PRIVATE /W4 /WX)
 endif()
 add_test(NAME config COMMAND config_tests)
+
+# The frozen HeadTracking.ini reader is the input boundary for every file an
+# earlier build left: what it accepts, what it refuses, what it puts in place of
+# a refusal, and that the refusal is logged rather than swallowed. It reads real
+# files through the same GetPrivateProfile* path every published build used.
+add_executable(legacy_reader_tests
+    tests/config_differential/legacy_reader_tests.cpp
+    src/legacy_config/legacy_config.cpp
+)
+target_include_directories(legacy_reader_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests
+)
+target_link_libraries(legacy_reader_tests PRIVATE cameraunlock)
+if(MSVC)
+    target_compile_options(legacy_reader_tests PRIVATE /W4 /WX)
+endif()
+add_test(NAME legacy_reader COMMAND legacy_reader_tests)
+
+# The config differential test. The oracle is the newest published build's reader and
+# Hotkeys::Start with the core sources they compiled, copied verbatim into
+# tests/config_differential/oracle. It is two libraries because Hotkeys::Start has to run on
+# oracle_fake's recording poller, keyboard and mod while the reader runs on the real published
+# IniReader; each renames the two namespaces its own way, so neither collides with the other or
+# with the current core and mod. Neither links the current core, so no current header reaches
+# them.
+set(WOLF_ORACLE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential/oracle)
+add_library(wolf_config_oracle STATIC
+    ${WOLF_ORACLE_DIR}/src/config.cpp
+    ${WOLF_ORACLE_DIR}/core/src/config/ini_reader.cpp
+    ${WOLF_ORACLE_DIR}/core/src/config/value_guards.cpp
+    ${WOLF_ORACLE_DIR}/core/src/logging/file_log.cpp
+    tests/config_differential/oracle_config_adapter.cpp
+)
+target_include_directories(wolf_config_oracle PRIVATE
+    ${WOLF_ORACLE_DIR}/src
+    ${WOLF_ORACLE_DIR}/core/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential)
+target_compile_definitions(wolf_config_oracle PRIVATE
+    cameraunlock=wolf_oracle_core
+    wolf_ht=wolf_oracle)
+
+add_library(wolf_hotkeys_oracle STATIC
+    ${WOLF_ORACLE_DIR}/src/hotkeys.cpp
+    ${WOLF_ORACLE_DIR}/core/src/logging/file_log.cpp
+    tests/config_differential/oracle_hotkeys_adapter.cpp
+)
+target_include_directories(wolf_hotkeys_oracle PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential/oracle_fake
+    ${WOLF_ORACLE_DIR}/src
+    ${WOLF_ORACLE_DIR}/core/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential)
+target_compile_definitions(wolf_hotkeys_oracle PRIVATE
+    cameraunlock=wolf_oracle_hk_core
+    wolf_ht=wolf_oracle_hk)
+target_compile_options(wolf_hotkeys_oracle PRIVATE
+    /FI${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential/oracle_fake/fake_keyboard.h)
+
+add_executable(config_differential_tests
+    tests/config_differential/differential_tests.cpp
+    src/legacy_config/legacy_config.cpp
+)
+target_include_directories(config_differential_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential
+)
+target_compile_definitions(config_differential_tests PRIVATE
+    WOLF_DIFFERENTIAL_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential/data")
+target_link_libraries(config_differential_tests PRIVATE
+    cameraunlock wolf_config_oracle wolf_hotkeys_oracle)
+if(MSVC)
+    target_compile_options(config_differential_tests PRIVATE /W4 /WX)
+endif()
+add_test(NAME config_differential COMMAND config_differential_tests)
 
 # Reclaiming the tracker port from another game, through this mod's own feed and
 # real sockets. It is the one behaviour whose acceptance criterion is a

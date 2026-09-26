@@ -52,7 +52,7 @@ jobs:
         uses: prefix-dev/setup-pixi@5185adfbffb4bd703da3010310260805d89ebb11 # v0.9.6
 
       # Same `pixi run test` a developer runs; the workflow owns no test logic.
-      # Five of the seven suites are C++ and depend on `build`, so pixi resolves
+      # All but two of the suites are C++ and depend on `build`, so pixi resolves
       # the whole graph and this step compiles before it tests. Named for what it
       # actually does rather than for the two PowerShell suites, because a
       # compile error surfacing under "Run script tests" is a wasted minute for
