@@ -8,6 +8,12 @@ license-file = "LICENSE"
 channels = ["conda-forge"]
 platforms = ["win-64"]
 
+[dependencies]
+# The build uses the system CMake and Visual Studio. nodejs runs the migrated-config lint in
+# `test`, render-config's encode-seed.mjs and core's validate-notices/validate-manifest,
+# pinned to the build cameraunlock-core's own lock resolved, so nothing newer than it lands.
+nodejs = "==26.5.0"
+
 [tasks]
 update-submodule = "git submodule update --remote cameraunlock-core && powershell -NoProfile -ExecutionPolicy Bypass -File cameraunlock-core/scripts/update-submodule.ps1"
 sync = "git submodule update --remote cameraunlock-core"
