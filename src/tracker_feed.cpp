@@ -14,21 +14,22 @@ namespace {
 
 cameraunlock::PositionSettings MakePositionSettings(const Config& c) {
     cameraunlock::PositionSettings s = cameraunlock::PositionSettings::Default();
-    s.limit_x = c.limit_x;
-    s.limit_y = c.limit_y;
-    s.limit_y_down = c.limit_y;
-    s.limit_z = c.limit_z;
-    s.limit_z_back = c.limit_z_back;
+    s.limit_x = c.position.limit_x;
+    s.limit_y = c.position.limit_y;
+    s.limit_y_down = c.position.limit_y_down;
+    s.limit_z = c.position.limit_z;
+    s.limit_z_back = c.position.limit_z_back;
     return s;
 }
 
 }  // namespace
 
 void TrackerFeed::Start(const Config& config) {
-    m_port = config.udp_port;
-    const auto startMode = config.position_enabled
-                               ? cameraunlock::TrackingMode::RotationAndPosition
-                               : cameraunlock::TrackingMode::RotationOnly;
+    // The table's range for UdpPort is 1-65535, so the port fits.
+    m_port = static_cast<std::uint16_t>(config.udp_port);
+    // The table reads a pair that names no mode as its defaults, so every loaded pair decodes.
+    const auto startMode =
+        cameraunlock::DecodeTrackingMode(config.rotation_enabled, config.position_enabled).value();
     m_session.SetMode(startMode);
     m_requestedMode.store(startMode);
     m_appliedMode = startMode;
@@ -81,7 +82,7 @@ void TrackerFeed::Invalidate() {
     m_position.Invalidate();
 }
 
-void TrackerFeed::CycleMode() {
+cameraunlock::TrackingMode TrackerFeed::CycleMode() {
     // Core's HeadTrackingSession::CycleMode owns this rule, and cannot be called
     // from here: it goes through SetMode, which resets non-atomic processor
     // state under the render thread. That is the whole reason this is deferred.
@@ -89,9 +90,10 @@ void TrackerFeed::CycleMode() {
     // are what stop core REORDERING the enum under it silently. A
     // NextTrackingMode free function in core would remove the restatement
     // altogether; it does not exist yet.
-    const auto current = m_requestedMode.load();
-    m_requestedMode.store(static_cast<cameraunlock::TrackingMode>(
-        (static_cast<int>(current) + 1) % kTrackingModeCount));
+    const auto next = static_cast<cameraunlock::TrackingMode>(
+        (static_cast<int>(m_requestedMode.load()) + 1) % kTrackingModeCount);
+    m_requestedMode.store(next);
+    return next;
 }
 
 const char* TrackerFeed::ModeName() const {

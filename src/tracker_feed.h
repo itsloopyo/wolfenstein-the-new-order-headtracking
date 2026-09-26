@@ -8,6 +8,7 @@
 #include "cameraunlock/protocol/udp_receiver.h"
 #include "cameraunlock/time/frame_clock.h"
 #include "cameraunlock/tracking/head_tracking_session.h"
+#include "cameraunlock/tracking/tracking_mode.h"
 #include "config.h"
 #include "published_triple.h"
 
@@ -41,7 +42,10 @@ public:
     // SetMode does more than store an atomic - stepping into RotationOnly also
     // resets the position processor's smoothing and the position interpolator,
     // which are plain floats the render thread may be inside at that moment.
-    void CycleMode();
+    // Steps from the last requested mode, not the applied one, because the
+    // render view is not built at the shell or in a load, so nothing applies a
+    // request there. Returns the mode it requested.
+    cameraunlock::TrackingMode CycleMode();
     const char* ModeName() const;
 
 private:

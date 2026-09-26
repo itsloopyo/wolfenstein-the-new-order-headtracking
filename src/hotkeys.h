@@ -9,10 +9,9 @@ namespace wolf_ht {
 struct Config;
 class HeadTrackingMod;
 
-// Every action gets a nav-cluster key and a Ctrl+Shift+<letter> chord from the
-// Y/G/H cluster, and both fire it. The chord exists for keyboards with no nav
-// cluster; the letters and their order are the fleet-wide convention, so the
-// same action sits on the same chord in every mod.
+// Every action fires on any key in its list from CameraUnlock.ini. The default
+// lists are a nav-cluster key and a Ctrl+Shift+<letter> chord from the Y/G/H
+// cluster, for keyboards with no nav cluster.
 class Hotkeys {
 public:
     void Start(HeadTrackingMod& mod, const Config& config);

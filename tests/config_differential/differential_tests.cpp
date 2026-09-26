@@ -4,6 +4,9 @@
 // with the core sources it compiled at its pin ee8cc72, and its Hotkeys::Start
 // (oracle_adapter.h).
 // Import: the frozen reader in src/legacy_config/.
+// Migration: the conversion, run by the config owner in a folder holding only a copy of the
+// input as HeadTracking.ini, which imports it into a new CameraUnlock.ini, then the canonical
+// reader and table on that file.
 //
 // Comparison 1, oracle against import, on every input: load status, every field both read
 // (floats bit for bit), which amounts to the startup state (tracking on or off, the tracking
@@ -11,9 +14,22 @@
 // modifiers. The only differences it may find are kComparisonOneDifferences, each with the
 // commit that made it; any other fails the test.
 //
-// Also asserted after every import: the folder, HeadTracking.ini's bytes, last write time and
-// attributes included, is as the import found it, and a read-only copy imports as a writable
-// one does.
+// Comparison 2, import against migration, on every input: every setting, the startup state and
+// which actions every key press fires. There is no allowed difference. The file holds no
+// sensitivity, inversion, deadzone or reticle setting to drop, the frozen reader refuses every
+// hotkey code outside 0x01-0xFE and replaces every value that is not finite, so N1 and N2 never
+// apply, and no default moved. Each nav-cluster code and chord letter become one key list,
+// LimitY becomes PositionLimitY and PositionLimitYDown, and [Position] Enabled the startup pair.
+//
+// Also asserted after every load: the folder, HeadTracking.ini's bytes, last write time and
+// attributes included, is as the import found it, with CameraUnlock.ini beside it after a
+// migration and nothing else; a read-only copy imports and migrates as a writable one does; the
+// migrated file is ASCII with CRLF endings and draws no diagnostic; and a second load over the
+// same Defaults.ini reads CameraUnlock.ini, gives the same settings and changes neither file nor
+// Defaults.ini. Every owner reads and creates one scratch Defaults.ini, which the first creates
+// with the built-in values, so an input holding the built-in values migrates to `default` rows.
+// With --migrated <dir>, every distinct migrated file is written there for lint-migrated.mjs to
+// run core's canonical config lint over.
 //
 // Inputs: no file, an empty file, the file the dev build writes at first launch when there is
 // none (its installer ZIP carried no config and its launcher manifest seeds nothing, and the
@@ -23,10 +39,16 @@
 //
 // `--first-run <path>` writes the oracle's first-run output to <path> and exits.
 
+#include "config.h"
 #include "legacy_config/legacy_config.h"
 #include "oracle_adapter.h"
 
+#include "cameraunlock/config/canonical_ini.h"
+#include "cameraunlock/config/config_owner.h"
 #include "cameraunlock/config/testing/ini_mutations.h"
+#include "cameraunlock/input/key_binding_registration.h"
+#include "cameraunlock/input/key_bindings.h"
+#include "cameraunlock/tracking/tracking_mode.h"
 
 #include <windows.h>
 
@@ -36,8 +58,10 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -45,10 +69,12 @@
 
 namespace fs = std::filesystem;
 namespace legacy = wolf_ht::legacy;
+using wolf_ht::Config;
 
 namespace {
 
 constexpr const char* kFileName = "HeadTracking.ini";
+constexpr const char* kConfigName = "CameraUnlock.ini";
 
 // What a player updating from c37f0f4 sees change that the conversion did not cause.
 //
@@ -238,7 +264,7 @@ public:
     Scratch() {
         root_ = fs::temp_directory_path() / ("wolf-config-differential-" + std::to_string(GetCurrentProcessId()));
         fs::remove_all(root_);
-        fs::create_directories(root_);
+        fs::create_directories(root_ / "global");
     }
     ~Scratch() {
         std::error_code ec;
@@ -247,11 +273,13 @@ public:
         }
         fs::remove_all(root_, ec);
     }
-    // Every folder, once an input is done with them, so the run holds a few folders on disk at
-    // a time rather than thousands. Each input still gets folders of its own: GetPrivateProfile*
-    // caches by path, and one file rewritten under one name reads back another input's values.
+    // Every folder but Defaults.ini's, once an input is done with them, so the run holds a few
+    // folders on disk at a time rather than thousands. Each input still gets folders of its own:
+    // GetPrivateProfile* caches by path, and one file rewritten under one name reads back another
+    // input's values.
     void Clear() {
         for (const auto& dir : fs::directory_iterator(root_)) {
+            if (dir.path().filename() == "global") continue;
             for (const auto& e : fs::recursive_directory_iterator(dir.path())) {
                 if (e.is_regular_file()) SetFileAttributesW(e.path().c_str(), FILE_ATTRIBUTE_NORMAL);
             }
@@ -262,6 +290,11 @@ public:
         const fs::path dir = root_ / (leaf + std::to_string(next_++));
         fs::create_directories(dir);
         return dir;
+    }
+    // One Defaults.ini for every owner, created by the first at the built-in values.
+    fs::path DefaultsPath() const { return root_ / "global" / "Defaults.ini"; }
+    cameraunlock::config::DefaultsFile Defaults() const {
+        return cameraunlock::config::DefaultsFile::At(DefaultsPath().wstring());
     }
 
 private:
@@ -339,6 +372,226 @@ ImportRun Comparison1(Scratch& scratch, const Input& input) {
     return import;
 }
 
+cameraunlock::input::KeyModifiers g_currentHeld = cameraunlock::input::KeyModifiers::kNone;
+
+cameraunlock::input::KeyModifiers CurrentHeld() { return g_currentHeld; }
+
+cameraunlock::input::KeyModifiers ModifiersOf(int held) {
+    using cameraunlock::input::KeyModifiers;
+    KeyModifiers m = KeyModifiers::kNone;
+    if ((held & 1) != 0) m = m | KeyModifiers::kCtrl;
+    if ((held & 2) != 0) m = m | KeyModifiers::kShift;
+    if ((held & 4) != 0) m = m | KeyModifiers::kAlt;
+    return m;
+}
+
+// OracleFires' table for the current build. Its Hotkeys::Start parses each key list and hands it
+// to RegisterKeyBindings, which puts one detail::GuardKey callback per distinct key on the poller,
+// holding that key's bindings in list order. The same callbacks are built here with the held
+// modifiers read from the test rather than the keyboard, since the poller keeps its callbacks to
+// itself. The current build has no ADS action, so that column stays 0.
+wolf_oracle_view::FireTable CurrentFires(const Config& m) {
+    using wolf_oracle_view::kFirstKey;
+    using wolf_oracle_view::kHeldStates;
+    using wolf_oracle_view::kLastKey;
+    std::array<int, wolf_oracle_view::kActions> fired{};
+    std::vector<std::pair<int, std::function<void()>>> registered;
+    const std::string* lists[3] = {&m.toggle_key_name, &m.cycle_tracking_mode_key_name, &m.yaw_mode_key_name};
+    for (int action = 0; action < 3; ++action) {
+        const cameraunlock::input::KeyBindingsParseResult parsed = cameraunlock::input::ParseKeyBindings(*lists[action]);
+        if (!parsed.ok()) throw std::logic_error("migrated hotkey list '" + *lists[action] + "' does not parse");
+        std::vector<int> keys;
+        std::vector<std::vector<cameraunlock::input::KeyModifiers>> modifiers;
+        for (const cameraunlock::input::KeyBinding& b : parsed.bindings) {
+            const auto at = std::find(keys.begin(), keys.end(), b.vk);
+            if (at == keys.end()) {
+                keys.push_back(b.vk);
+                modifiers.push_back({b.modifiers});
+            } else {
+                modifiers[static_cast<std::size_t>(at - keys.begin())].push_back(b.modifiers);
+            }
+        }
+        for (std::size_t i = 0; i < keys.size(); ++i) {
+            registered.emplace_back(keys[i], cameraunlock::input::detail::GuardKey(
+                                                 std::move(modifiers[i]), [&fired, action] { ++fired[action]; },
+                                                 &CurrentHeld));
+        }
+    }
+
+    wolf_oracle_view::FireTable table;
+    table.reserve((kLastKey - kFirstKey + 1) * kHeldStates);
+    for (int vk = kFirstKey; vk <= kLastKey; ++vk) {
+        for (int held = 0; held < kHeldStates; ++held) {
+            fired = {};
+            g_currentHeld = ModifiersOf(held);
+            for (const auto& r : registered) {
+                if (r.first == vk) r.second();
+            }
+            table.push_back(fired);
+        }
+    }
+    g_currentHeld = cameraunlock::input::KeyModifiers::kNone;
+    return table;
+}
+
+using cameraunlock::config::ConfigLoadStatus;
+using cameraunlock::config::ImportResult;
+using cameraunlock::config::ImportStatus;
+
+cameraunlock::config::ConfigLoadResult<Config> LoadOwner(const Scratch& scratch, const fs::path& dir) {
+    cameraunlock::config::ConfigOwner<Config> owner(wolf_ht::config::MakeOwnerOptions(dir.wstring(), scratch.Defaults()));
+    return owner.Load();
+}
+
+// The import with its map, on its own copy, for the values it drops.
+ImportResult RunMappedImport(Scratch& scratch, const Input& input) {
+    const fs::path file = Place(scratch.Fresh("mapped"), input);
+    cameraunlock::config::LegacyInput legacyInput;
+    legacyInput.path = file.wstring();
+    legacyInput.ansi_path = file.string();
+    Config out;
+    return wolf_ht::config::MakeLegacyImport().run(legacyInput, out);
+}
+
+// The startup mode every published build derived from [Position] Enabled.
+cameraunlock::TrackingMode LegacyStartMode(const legacy::Config& l) {
+    return l.position_enabled ? cameraunlock::TrackingMode::RotationAndPosition
+                              : cameraunlock::TrackingMode::RotationOnly;
+}
+
+// Every setting the migration carries, against the import's, and the startup state.
+std::vector<std::string> MigrationDifferences(const legacy::Config& l, const Config& m) {
+    std::vector<std::string> d;
+    auto x = [&d](const char* n, bool same) { if (!same) d.push_back(n); };
+    x("UdpPort", m.udp_port == l.udp_port);
+    x("EnableOnStartup", m.enable_on_startup == l.enable_on_startup);
+    x("WorldSpaceYaw", m.world_space_yaw == l.world_space_yaw);
+    x("LocalSmoothing", SameBits(m.local_smoothing, l.local_smoothing) &&
+                            SameBits(m.position.local_smoothing, l.local_smoothing));
+    x("RemoteSmoothing", SameBits(m.remote_smoothing, l.remote_smoothing) &&
+                             SameBits(m.position.remote_smoothing, l.remote_smoothing));
+    const auto mode = cameraunlock::DecodeTrackingMode(m.rotation_enabled, m.position_enabled);
+    x("tracking mode", mode.has_value() && *mode == LegacyStartMode(l));
+    x("PositionLimitX", SameBits(m.position.limit_x, l.limit_x));
+    x("PositionLimitY", SameBits(m.position.limit_y, l.limit_y));
+    x("PositionLimitYDown", SameBits(m.position.limit_y_down, l.limit_y));
+    x("PositionLimitZ", SameBits(m.position.limit_z, l.limit_z));
+    x("PositionLimitZBack", SameBits(m.position.limit_z_back, l.limit_z_back));
+    return d;
+}
+
+// Every setting the session runs on that differs between two loads.
+std::vector<std::string> SettingsDifferences(const Config& a, const Config& b) {
+    std::vector<std::string> d;
+    auto x = [&d](const char* n, bool same) { if (!same) d.push_back(n); };
+    x("UdpPort", a.udp_port == b.udp_port);
+    x("EnableOnStartup", a.enable_on_startup == b.enable_on_startup);
+    x("WorldSpaceYaw", a.world_space_yaw == b.world_space_yaw);
+    x("RotationEnabled", a.rotation_enabled == b.rotation_enabled);
+    x("PositionEnabled", a.position_enabled == b.position_enabled);
+    x("LocalSmoothing", SameBits(a.local_smoothing, b.local_smoothing) &&
+                            SameBits(a.position.local_smoothing, b.position.local_smoothing));
+    x("RemoteSmoothing", SameBits(a.remote_smoothing, b.remote_smoothing) &&
+                             SameBits(a.position.remote_smoothing, b.position.remote_smoothing));
+    x("PositionLimitX", SameBits(a.position.limit_x, b.position.limit_x));
+    x("PositionLimitY", SameBits(a.position.limit_y, b.position.limit_y));
+    x("PositionLimitYDown", SameBits(a.position.limit_y_down, b.position.limit_y_down));
+    x("PositionLimitZ", SameBits(a.position.limit_z, b.position.limit_z));
+    x("PositionLimitZBack", SameBits(a.position.limit_z_back, b.position.limit_z_back));
+    x("ToggleKey", a.toggle_key_name == b.toggle_key_name);
+    x("CycleTrackingModeKey", a.cycle_tracking_mode_key_name == b.cycle_tracking_mode_key_name);
+    x("YawModeKey", a.yaw_mode_key_name == b.yaw_mode_key_name);
+    return d;
+}
+
+bool Ascii(const std::string& bytes) {
+    for (const char c : bytes) {
+        if (static_cast<unsigned char>(c) > 0x7F) return false;
+    }
+    return true;
+}
+
+bool CrlfOnly(const std::string& bytes) {
+    for (std::size_t i = 0; i < bytes.size(); ++i) {
+        if (bytes[i] == '\n' && (i == 0 || bytes[i - 1] != '\r')) return false;
+        if (bytes[i] == '\r' && (i + 1 == bytes.size() || bytes[i + 1] != '\n')) return false;
+    }
+    return !bytes.empty() && bytes.back() == '\n';
+}
+
+// Each distinct migrated file, for lint-migrated.mjs.
+std::set<std::string> g_migrated;
+
+// The migration on one copy of the input. Returns what it ran on.
+std::optional<Config> Migrate(Scratch& scratch, const Input& input, bool readOnly) {
+    const fs::path dir = scratch.Fresh(readOnly ? "migration-ro" : "migration");
+    const fs::path file = Place(dir, input);
+    if (input.bytes && readOnly) SetReadOnly(file);
+    const std::vector<Entry> before = List(dir);
+    const std::string defaultsBefore = fs::exists(scratch.DefaultsPath()) ? ReadBytes(scratch.DefaultsPath()) : "";
+
+    const cameraunlock::config::ConfigLoadResult<Config> loaded = LoadOwner(scratch, dir);
+    const ConfigLoadStatus expected = input.bytes ? ConfigLoadStatus::Migrated : ConfigLoadStatus::Created;
+    Check(loaded.status == expected, input.name + ": not " + cameraunlock::config::ConfigLoadStatusName(expected) +
+                                         " but " + cameraunlock::config::ConfigLoadStatusName(loaded.status) +
+                                         ": " + loaded.reason);
+    if (loaded.status != expected) return std::nullopt;
+
+    // HeadTracking.ini as it was, and CameraUnlock.ini beside it, and nothing else.
+    std::vector<Entry> after = List(dir);
+    const auto created = std::find_if(after.begin(), after.end(), [](const Entry& e) { return e.name == kConfigName; });
+    Check(created != after.end(), input.name + ": no CameraUnlock.ini");
+    if (created == after.end()) return std::nullopt;
+    const std::string bytes = created->bytes;
+    after.erase(created);
+    Check(after == before, input.name + ": HeadTracking.ini or its folder changed");
+    g_migrated.insert(bytes);
+
+    // What the owner wrote reads back as it is, with nothing to report.
+    const cameraunlock::config::CanonicalIni doc = cameraunlock::config::ParseCanonicalIni(bytes);
+    Check(doc.IsReadable() && cameraunlock::config::HasCanonicalStamp(bytes) && doc.diagnostics.empty(),
+          input.name + ": the migrated file draws reader diagnostics");
+    Check(Ascii(bytes) && CrlfOnly(bytes), input.name + ": the migrated file is not ASCII with CRLF endings");
+    Check(loaded.diagnostics.empty(), input.name + ": the migrated file draws table diagnostics");
+
+    // The next start reads CameraUnlock.ini, runs on the same settings and changes nothing.
+    const std::vector<Entry> settled = List(dir);
+    const cameraunlock::config::ConfigLoadResult<Config> again = LoadOwner(scratch, dir);
+    Check(again.status == ConfigLoadStatus::Canonical, input.name + ": the second start did not read CameraUnlock.ini");
+    Check(SettingsDifferences(again.config, loaded.config).empty(),
+          input.name + ": the second start runs on other settings: " +
+              Join(SettingsDifferences(again.config, loaded.config)));
+    Check(List(dir) == settled, input.name + ": the second start changed a file");
+    if (!defaultsBefore.empty()) {
+        Check(ReadBytes(scratch.DefaultsPath()) == defaultsBefore, input.name + ": Defaults.ini changed");
+    }
+    return loaded.config;
+}
+
+void Comparison2(Scratch& scratch, const Input& input, const ImportRun& import) {
+    const std::optional<Config> migrated = Migrate(scratch, input, false);
+    const std::optional<Config> readOnly = Migrate(scratch, input, true);
+    if (!migrated || !readOnly) return;
+    Check(SettingsDifferences(*migrated, *readOnly).empty(),
+          input.name + ": a read-only copy migrates differently: " + Join(SettingsDifferences(*migrated, *readOnly)));
+
+    const legacy::Config& l = import.config;
+    const Config& m = *migrated;
+    const std::vector<std::string> d = MigrationDifferences(l, m);
+    Check(d.empty(), input.name + ": migration differs from the import: " + Join(d));
+
+    const ImportResult imported = RunMappedImport(scratch, input);
+    Check(imported.status == (input.bytes ? ImportStatus::Imported : ImportStatus::Absent),
+          input.name + ": the mapped import's status");
+    Check(imported.dropped.empty(), input.name + ": the import dropped a value");
+    Check(imported.pose_shaping.empty(), input.name + ": the import recorded pose shaping");
+
+    const wolf_oracle_view::FireTable before = wolf_oracle_view::OracleFires(ImportKeys(l));
+    const wolf_oracle_view::FireTable after = CurrentFires(m);
+    Check(FireDifference(before, after, wolf_oracle_view::kActions) == "none",
+          input.name + ": hotkeys fire differently: " + FireDifference(before, after, wolf_oracle_view::kActions));
+}
+
 // The first-run file with one line's value replaced; the line must be there.
 std::string WithValue(const std::string& firstRun, const std::string& key, const std::string& value) {
     const std::string marker = "\n" + key + "=";
@@ -373,6 +626,7 @@ std::vector<Input> Inputs(const std::string& firstRun) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    const char* migratedDir = argc == 3 && std::strcmp(argv[1], "--migrated") == 0 ? argv[2] : nullptr;
     if (argc == 3 && std::strcmp(argv[1], "--first-run") == 0) {
         Scratch scratch;
         const fs::path dir = scratch.Fresh("first-run");
@@ -399,9 +653,20 @@ int main(int argc, char** argv) {
         for (const char* difference : kComparisonOneDifferences) {
             std::printf("  expected difference: %s\n", difference);
         }
+        std::printf("comparison 2 (the import against the migration)\n");
         for (const Input& input : inputs) {
-            Comparison1(scratch, input);
+            Comparison2(scratch, input, Comparison1(scratch, input));
             scratch.Clear();
+        }
+
+        if (migratedDir != nullptr) {
+            fs::remove_all(migratedDir);
+            fs::create_directories(migratedDir);
+            int n = 0;
+            for (const std::string& bytes : g_migrated) {
+                WriteBytes(fs::path(migratedDir) / ("migrated-" + std::to_string(n++) + ".ini"), bytes);
+            }
+            std::printf("wrote %zu distinct migrated files to %s\n", g_migrated.size(), migratedDir);
         }
     } catch (const std::exception& e) {
         std::printf("  FAIL: threw: %s\n", e.what());

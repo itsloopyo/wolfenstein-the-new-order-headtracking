@@ -39,19 +39,7 @@ HeadTrackingMod::HeadTrackingMod() = default;
 HeadTrackingMod::~HeadTrackingMod() = default;
 
 void HeadTrackingMod::LoadSettings() {
-    // Core's narrowing, because WideCharToMultiByte best-fit maps by default: a
-    // character the ANSI code page cannot encode becomes a similar-looking one,
-    // so a game directory can narrow to the name of a DIFFERENT directory that
-    // exists and the INI is then read from and written to that one. Core
-    // refuses instead, which lands on the no-INI path below.
-    const std::string exeDir = cameraunlock::os::HostExeDirectoryNarrow();
-    if (exeDir.empty()) {
-        Log::Line("[mod] could not resolve the game directory in a form the INI reader can "
-                  "use; built-in defaults are in use and HeadTracking.ini will not be read");
-        return;
-    }
-    WriteDefaultConfigIfMissing(exeDir);
-    LoadConfig(exeDir, m_config);
+    m_config = config::Load(cameraunlock::os::HostExeDirectory());
 }
 
 // A hook that will not install on a build the mod DOES recognise leaves the
@@ -231,15 +219,22 @@ void HeadTrackingMod::ToggleEnabled() {
     Log::Line("[mod] tracking -> %s", next ? "on" : "off");
 }
 
+// End changes the session only and never writes the config; the other two
+// toggles apply first and then save, so the choice survives a restart.
 void HeadTrackingMod::ToggleYawMode() {
     const bool next = !m_worldSpaceYaw.load();
     m_worldSpaceYaw.store(next);
     Log::Line("[mod] yaw about -> %s", next ? "world up" : "the view axis");
+    config::Save([next](Config& c) { c.world_space_yaw = next; });
 }
 
 void HeadTrackingMod::CycleTrackingMode() {
-    m_feed.CycleMode();
+    const cameraunlock::TrackingModeChannels channels = cameraunlock::EncodeTrackingMode(m_feed.CycleMode());
     Log::Line("[mod] tracking mode -> %s", m_feed.ModeName());
+    config::Save([channels](Config& c) {
+        c.rotation_enabled = channels.rotation_enabled;
+        c.position_enabled = channels.position_enabled;
+    });
 }
 
 }  // namespace wolf_ht

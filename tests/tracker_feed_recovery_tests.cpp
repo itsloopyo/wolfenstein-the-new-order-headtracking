@@ -547,11 +547,12 @@ void TestLateralAndVerticalSigns() {
     CheckNear(r.up, 0.10f * kInchesPerMetre, 0.5f, "protocol +y maps to id Tech +up");
 }
 
-void TestLimitYMirrorsIntoTheDownwardLimit() {
-    std::printf("LimitY bounds the downward travel too:\n");
+void TestPositionLimitYDownBoundsTheDownwardTravel() {
+    std::printf("PositionLimitYDown bounds the downward travel:\n");
 
     const std::uint16_t port = kRecoveryPortBase + 28;
-    // 30cm down, against a LimitY the player has tightened to 0.05m.
+    // 30cm down, against a PositionLimitYDown the player has tightened to 0.05m
+    // while PositionLimitY stays at its default.
     PoseSender sender(port, static_cast<std::uint16_t>(port + 1), 0, 0, 0, 0, -30.0, 0);
     if (!sender.Ok()) {
         Check(false, "the test sender binds its own port");
@@ -560,7 +561,7 @@ void TestLimitYMirrorsIntoTheDownwardLimit() {
 
     wolf_ht::Config config;
     config.udp_port = port;
-    config.limit_y = 0.05f;
+    config.position.limit_y_down = 0.05f;
     wolf_ht::TrackerFeed feed;
     feed.Start(config);
 
@@ -568,12 +569,12 @@ void TestLimitYMirrorsIntoTheDownwardLimit() {
     Check(r.havePosition, "a position arrives at all");
     if (!r.havePosition) return;
 
-    // PositionSettings carries a separate limit_y_down, and Config does not, so
-    // MakePositionSettings mirrors LimitY into it. Drop that one line and the
-    // default 0.20 survives here: a player who tightened LimitY to 0.05 still
-    // gets four times the downward travel they asked for, silently.
+    // MakePositionSettings copies each limit across one by one. Drop the
+    // downward one and the default 0.20 survives here: a player who tightened
+    // it to 0.05 still gets four times the downward travel they asked for,
+    // silently.
     CheckNear(r.up, -0.05f * kInchesPerMetre, 0.5f,
-               "downward travel is bounded by LimitY, not by the default");
+               "downward travel is bounded by PositionLimitYDown, not by the default");
 }
 
 void TestLocalSmoothingIsSelectedForLoopback() {
@@ -619,7 +620,7 @@ int main() {
     TestForwardLeanIsNegativeProtocolZ();
     TestBackwardLeanGetsTheTightLimit();
     TestLateralAndVerticalSigns();
-    TestLimitYMirrorsIntoTheDownwardLimit();
+    TestPositionLimitYDownBoundsTheDownwardTravel();
     TestLocalSmoothingIsSelectedForLoopback();
 
     std::remove(kLogPath);

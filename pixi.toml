@@ -47,9 +47,14 @@ test-config = { cmd = "build/Release/config_tests.exe", depends-on = ["build"] }
 test-legacyreader = { cmd = "build/Release/legacy_reader_tests.exe", depends-on = ["build"] }
 # The config differential test proves nothing once a file it compiles has moved, so the
 # provenance check runs first. It then holds the frozen HeadTracking.ini reader to the published
-# build's on every input (comparison 1).
+# build's on every input (comparison 1) and the migration into CameraUnlock.ini to the frozen
+# reader (comparison 2), and core's canonical config lint runs over every file it migrated.
 test-configprovenance = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-differential-provenance.ps1"
-test-configdifferential = { cmd = "build/Release/config_differential_tests.exe", depends-on = ["build", "test-configprovenance"] }
+test-configdifferential = { cmd = "build/Release/config_differential_tests.exe --migrated build/migrated && node tests/config_differential/lint-migrated.mjs build/migrated", depends-on = ["build", "test-configprovenance"] }
+
+# Rewrite the committed CameraUnlock.ini from the config table after a change to a row, a
+# comment or a default, then the launcher manifest's config descriptor.
+render-config = { cmd = "build/Release/config_tests.exe --render-config CameraUnlock.ini && node cameraunlock-core/scripts/encode-seed.mjs", depends-on = ["build"] }
 # Binds real loopback sockets and sleeps through several retry periods, so it is
 # the slow one (~10s). It stays in `test` regardless: the thing it measures is a
 # duration a player waits, and nothing else in the suite would notice it growing.

@@ -3,84 +3,50 @@
 
 #pragma once
 
-#include <cstdint>
+#include <functional>
 #include <string>
 
-#include "cameraunlock/data/position_settings.h"
-#include "cameraunlock/math/smoothing_utils.h"
+#include "cameraunlock/config/config_owner.h"
+#include "cameraunlock/config/head_tracking_config.h"
 
+// CameraUnlock.ini, next to WolfNewOrder_x64.exe, in cameraunlock-core's
+// canonical format. The owner imports HeadTracking.ini, the file every earlier
+// build read from the same folder, once while CameraUnlock.ini is absent, and
+// never writes it.
 namespace wolf_ht {
 
-// The shipped default for each smoothing key. Named once here because two
-// places need it and they must not drift: the Config members below, and the
-// loader, where a value it refuses has to land on the default of the key it
-// came from rather than on one shared by both.
-inline constexpr float kDefaultLocalSmoothing =
-    static_cast<float>(cameraunlock::math::kDefaultLocalSmoothing);
-inline constexpr float kDefaultRemoteSmoothing =
-    static_cast<float>(cameraunlock::math::kDefaultRemoteSmoothing);
-
-// Default hotkey bindings, as Windows virtual key codes. Written as codes
-// rather than the VK_ macros because this header is included by translation
-// units that do not pull in windows.h, and the INI publishes them as codes too.
-inline constexpr int kDefaultToggleKey = 0x23;           // End
-inline constexpr int kDefaultCycleModeKey = 0x21;        // Page Up
-inline constexpr int kDefaultYawModeKey = 0x22;          // Page Down
-inline constexpr int kDefaultChordToggleKey = 0x59;      // Y, as Ctrl+Shift+Y
-inline constexpr int kDefaultChordCycleModeKey = 0x47;   // G, as Ctrl+Shift+G
-inline constexpr int kDefaultChordYawModeKey = 0x48;     // H, as Ctrl+Shift+H
-
-struct Config {
-    // Held as the socket's own type so an out-of-range INI value cannot reach
-    // UdpReceiver::Start by silently truncating to a wrong 16-bit port.
-    std::uint16_t udp_port = 4242;
-    bool enable_on_startup = true;
-
-    // Virtual key codes. Every action has a nav-cluster key and a
-    // Ctrl+Shift+<key> chord, and both fire it - the chord is there for
-    // keyboards with no nav cluster.
-    int toggle_key = kDefaultToggleKey;
-    int cycle_mode_key = kDefaultCycleModeKey;
-    int yaw_mode_key = kDefaultYawModeKey;
-    int chord_toggle_key = kDefaultChordToggleKey;
-    int chord_cycle_mode_key = kDefaultChordCycleModeKey;
-    int chord_yaw_mode_key = kDefaultChordYawModeKey;
-
-    // Head yaw about world up rather than about the camera's own up axis. B.J.
-    // is a person standing on the ground for all but the vehicle sequences, so
-    // the horizon means something and both positions are defensible - hence the
-    // toggle. World up is the default because it is what keeps a glance left
-    // level while the player is looking up or down a stairwell.
-    bool world_space_yaw = true;
-
-    // No sensitivity, deadzone, response curve or axis inversion lives here,
-    // for rotation or for position: the tracker owns pose shaping, so the pose
-    // is consumed at 1:1 and one tracker profile behaves the same way in every
-    // game. The protocol-to-engine sign conversion the camera does need is a
-    // fixed part of the boundary in tracker_feed.cpp, not a setting.
-
-    // Smoothing is chosen per connection from the packet's source address, and
-    // both values cover rotation and position alike. A tracker running on this
-    // machine is already steady, so local_smoothing is 0.0 and nothing floors
-    // it; a phone on WiFi jitters over the network, which is what
-    // remote_smoothing is for.
-    float local_smoothing = kDefaultLocalSmoothing;
-    float remote_smoothing = kDefaultRemoteSmoothing;
-
-    bool position_enabled = true;
-    float limit_x = cameraunlock::PositionSettings{}.limit_x;
-    float limit_y = cameraunlock::PositionSettings{}.limit_y;
-    float limit_z = cameraunlock::PositionSettings{}.limit_z;
-    float limit_z_back = cameraunlock::PositionSettings{}.limit_z_back;
-};
-
-// Reads HeadTracking.ini from `exe_dir` through the frozen reader in
-// src/legacy_config and sets every member of `out` from it. A key that is
-// absent, or whose value the reader refuses, gives the shipped default.
-void LoadConfig(const std::string& exe_dir, Config& out);
-
-// Writes the documented default HeadTracking.ini into `exe_dir`, unless one is
-// already there. Never overwrites a user's file.
-void WriteDefaultConfigIfMissing(const std::string& exe_dir);
+// No sensitivity, deadzone, response curve or axis inversion lives here, for
+// rotation or for position: the tracker owns pose shaping, so the pose is
+// consumed at 1:1. The protocol-to-engine sign conversion and the metres to
+// id Tech units scale are fixed parts of the boundary in tracker_feed.cpp.
+struct Config : cameraunlock::HeadTrackingConfig {};
 
 }  // namespace wolf_ht
+
+namespace wolf_ht::config {
+
+constexpr const char* kDisplayName = "Wolfenstein: The New Order";
+constexpr const wchar_t* kConfigFileName = L"CameraUnlock.ini";
+constexpr const wchar_t* kLegacyFileName = L"HeadTracking.ini";
+
+cameraunlock::config::ConfigTable<Config> MakeTable();
+cameraunlock::config::LegacyImport<Config> MakeLegacyImport();
+
+// The owner's options for CameraUnlock.ini in `exe_dir`, with HeadTracking.ini
+// beside it as the legacy file. The mod passes the player's own Defaults.ini,
+// a test one at a scratch path.
+cameraunlock::config::ConfigOwnerOptions<Config> MakeOwnerOptions(
+    const std::wstring& exe_dir, cameraunlock::config::DefaultsFile defaults);
+
+// Builds the process's owner for CameraUnlock.ini in `exe_dir`, loads it, and
+// writes every line the load returned to the log. Bootstrap thread, once, after
+// the log is open.
+Config Load(const std::wstring& exe_dir);
+
+// Apply-then-save for a toggle: the caller has applied the new value to the
+// running game; this writes it through the owner and logs what happened. A
+// failed save leaves the session running on the new value. The hotkey thread
+// only, never a per-frame path.
+void Save(const std::function<void(Config&)>& change);
+
+}  // namespace wolf_ht::config

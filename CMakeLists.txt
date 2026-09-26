@@ -116,13 +116,15 @@ if(MSVC)
 endif()
 add_test(NAME ads COMMAND ads_tests)
 
-# The default HeadTracking.ini the mod writes on a first launch and the runtime
-# Config it loads into. It carries the config_defaults check src/config.cpp
-# names - the shipped default file read back through the frozen reader over a
-# poisoned Config - which is what stops that text and the Config member
-# initialisers drifting apart.
+# CameraUnlock.ini: the committed file against the table, what the owner
+# creates on a first start and on the first start after an update, and what a
+# toggle's save changes. `--render-config <path>` is pixi run render-config.
 add_executable(config_tests tests/config_tests.cpp src/config.cpp src/legacy_config/legacy_config.cpp)
 target_include_directories(config_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_definitions(config_tests PRIVATE
+    WOLF_COMMITTED_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/CameraUnlock.ini"
+    WOLF_DIFFERENTIAL_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential/data"
+    WOLF_DEFAULTS_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/cameraunlock-core/data/fixtures/canonical-ini/global/Defaults.ini")
 target_link_libraries(config_tests PRIVATE cameraunlock)
 if(MSVC)
     target_compile_options(config_tests PRIVATE /W4 /WX)
@@ -188,6 +190,7 @@ target_compile_options(wolf_hotkeys_oracle PRIVATE
 
 add_executable(config_differential_tests
     tests/config_differential/differential_tests.cpp
+    src/config.cpp
     src/legacy_config/legacy_config.cpp
 )
 target_include_directories(config_differential_tests PRIVATE
