@@ -138,11 +138,19 @@ function Copy-FileLiteral {
     Same wildcard trap as Copy-FileLiteral, one step further downstream:
     `Compress-Archive -Path "$dir\*"` under a path containing [ or ] writes no
     archive at all and raises nothing, so a release run finishes green with no
-    ZIP on disk. Enumerating the children and passing them as -LiteralPath
-    produces byte-identical entry names and cannot silently match nothing.
+    ZIP on disk.
 
-    An empty staging directory is refused rather than published: an archive
-    with no payload in it is the one outcome nobody downstream checks for.
+    Compress-Archive is not used at all, because its entry names depend on
+    which Microsoft.PowerShell.Archive the machine has: 1.0.1.0, the one
+    Windows ships, writes `plugins\Mod.asi`, and the GitHub windows runner's
+    writes `plugins/Mod.asi`. The same commit packaged locally and in CI gave
+    two different ZIPs. The ZIP format's separator is `/`, and a backslash
+    entry unpacks on Linux as a file with a backslash in its name, so every
+    entry is written with `/` here whatever the machine.
+
+    A staging directory with no file in it is refused rather than published:
+    an archive with no payload in it is the one outcome nobody downstream
+    checks for.
 .PARAMETER SourceDir
     Directory whose children become the archive's top-level entries.
 .PARAMETER DestinationPath
@@ -157,13 +165,27 @@ function New-ZipFromDirectory {
     if (-not (Test-Path -LiteralPath $SourceDir -PathType Container)) {
         throw "Staging directory does not exist: $SourceDir"
     }
-    $items = @(Get-ChildItem -LiteralPath $SourceDir -Force | Select-Object -ExpandProperty FullName)
-    if ($items.Count -eq 0) {
+    $root = (Resolve-Path -LiteralPath $SourceDir).ProviderPath.TrimEnd('\', '/')
+    $files = @(Get-ChildItem -LiteralPath $root -Recurse -File -Force)
+    if ($files.Count -eq 0) {
         throw "Staging directory is empty, refusing to publish an archive with no payload: $SourceDir"
     }
-    Compress-Archive -LiteralPath $items -DestinationPath $DestinationPath -Force
-    if (-not (Test-Path -LiteralPath $DestinationPath -PathType Leaf)) {
-        throw "Compress-Archive returned without an error but $DestinationPath was not written."
+    # .NET resolves a relative path against the process directory, not $PWD.
+    $zipPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($DestinationPath)
+    if (Test-Path -LiteralPath $zipPath) {
+        Remove-Item -LiteralPath $zipPath -Force -ErrorAction Stop
+    }
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::Open($zipPath, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($file in $files) {
+            $entryName = $file.FullName.Substring($root.Length + 1).Replace('\', '/')
+            [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                $zip, $file.FullName, $entryName, [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+        }
+    } finally {
+        $zip.Dispose()
     }
 }
 

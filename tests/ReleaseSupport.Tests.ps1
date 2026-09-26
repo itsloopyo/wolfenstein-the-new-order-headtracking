@@ -170,7 +170,7 @@ try {
     Compress-Archive -Path (Join-Path $zipStage '*') -DestinationPath $wildZip -Force -ErrorAction SilentlyContinue
     Check 'Compress-Archive -Path silently writes no ZIP from a bracketed stage' `
         (-not (Test-Path -LiteralPath $wildZip)) `
-        'Compress-Archive now handles bracketed paths; the wrapper may no longer be needed'
+        'Compress-Archive now handles bracketed paths'
 
     $goodZip = Join-Path $sandbox 'installer.zip'
     New-ZipFromDirectory -SourceDir $zipStage -DestinationPath $goodZip
@@ -184,10 +184,11 @@ try {
     } finally { $archive.Dispose() }
 
     # Entry names are the packager's contract - install.cmd reads plugins\ and
-    # the ZIP root - so the wrapper has to reproduce what the wildcard form
-    # produced, separators included.
-    Check 'New-ZipFromDirectory roots entries at the staging directory' `
-        (($entries -contains 'plugins\Mod.asi') -and ($entries -contains 'install.cmd')) `
+    # the ZIP root, and the launcher manifest names plugins/<asi> - and the
+    # separator is `/` on every machine, never what the local Archive module
+    # happens to write.
+    Check 'New-ZipFromDirectory roots entries at the staging directory with / separators' `
+        (($entries.Count -eq 2) -and ($entries -contains 'plugins/Mod.asi') -and ($entries -contains 'install.cmd')) `
         "entries: $($entries -join ', ')"
 
     $emptyStage = Join-Path $sandbox 'empty-stage'
