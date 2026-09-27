@@ -12,7 +12,6 @@
 #include "logging.h"
 
 #include "cameraunlock/config/head_tracking_config_table.h"
-#include "cameraunlock/input/key_bindings.h"
 
 namespace wolf_ht::config {
 
@@ -20,16 +19,6 @@ namespace {
 
 namespace cfg = ::cameraunlock::config;
 using C = cfg::schema::Concept;
-using cameraunlock::input::KeyModifiers;
-
-// The two bindings every published build registered for one action: the
-// nav-cluster code, which did not fire while Ctrl and Shift were both held, and
-// the chord letter, which fired only while they were. The frozen reader refuses
-// any code outside 0x01-0xFE, so both format.
-std::string KeyList(int nav, int chord) {
-    return cameraunlock::input::FormatKeyBindings(
-        {{KeyModifiers::kNone, nav}, {KeyModifiers::kCtrl | KeyModifiers::kShift, chord}});
-}
 
 cfg::ImportResult RunImport(const cfg::LegacyInput& input, Config& out) {
     legacy::Config read;
@@ -57,11 +46,44 @@ cfg::ImportResult RunImport(const cfg::LegacyInput& input, Config& out) {
     out.position.limit_z = read.limit_z;
     out.position.limit_z_back = read.limit_z_back;
 
-    out.toggle_key_name = KeyList(read.toggle_key, read.chord_toggle_key);
-    out.cycle_tracking_mode_key_name = KeyList(read.cycle_mode_key, read.chord_cycle_mode_key);
-    out.yaw_mode_key_name = KeyList(read.yaw_mode_key, read.chord_yaw_mode_key);
+    // Each action had a nav-cluster key, which did not fire while Ctrl and Shift were both held,
+    // and a chord key, which fired only while they were.
+    std::vector<cfg::DroppedValue> dropped;
+    const auto bindings = [&dropped](int key, const char* key_name, int chord, const char* chord_name) {
+        std::string list = cfg::LegacyVirtualKeyToBindings(key, "Hotkeys", key_name, dropped);
+        const std::string chord_key = cfg::LegacyVirtualKeyToBindings(chord, "Hotkeys", chord_name, dropped);
+        if (!chord_key.empty()) list += (list.empty() ? "Ctrl+Shift+" : ", Ctrl+Shift+") + chord_key;
+        return list;
+    };
+    out.toggle_key_name = bindings(read.toggle_key, "ToggleKey", read.chord_toggle_key, "ChordToggleKey");
+    out.cycle_tracking_mode_key_name =
+        bindings(read.cycle_mode_key, "CycleModeKey", read.chord_cycle_mode_key, "ChordCycleModeKey");
+    out.yaw_mode_key_name = bindings(read.yaw_mode_key, "YawModeKey", read.chord_yaw_mode_key, "ChordYawModeKey");
 
-    return absent ? cfg::ImportResult::Absent({}) : cfg::ImportResult::Imported({});
+    // A setting the player never changed from what the dev build shipped follows Defaults.ini.
+    // LimitY stood for both vertical bounds, and each hotkey for its key and its chord key together.
+    const legacy::Config shipped;
+    cfg::LegacyFollowsDefaultsIni follows;
+    follows.Setting(C::UdpPort, read.udp_port, shipped.udp_port);
+    follows.Setting(C::EnableOnStartup, read.enable_on_startup, shipped.enable_on_startup);
+    follows.Setting(C::WorldSpaceYaw, read.world_space_yaw, shipped.world_space_yaw);
+    follows.TrackingMode(read.position_enabled, shipped.position_enabled);
+    follows.Setting(C::LocalSmoothing, read.local_smoothing, shipped.local_smoothing);
+    follows.Setting(C::RemoteSmoothing, read.remote_smoothing, shipped.remote_smoothing);
+    follows.Setting(C::PositionLimitX, read.limit_x, shipped.limit_x);
+    follows.Setting(C::PositionLimitY, read.limit_y, shipped.limit_y);
+    follows.Setting(C::PositionLimitYDown, read.limit_y, shipped.limit_y);
+    follows.Setting(C::PositionLimitZ, read.limit_z, shipped.limit_z);
+    follows.Setting(C::PositionLimitZBack, read.limit_z_back, shipped.limit_z_back);
+    follows.Setting(C::ToggleKey,
+                    read.toggle_key == shipped.toggle_key && read.chord_toggle_key == shipped.chord_toggle_key);
+    follows.Setting(C::CycleTrackingModeKey, read.cycle_mode_key == shipped.cycle_mode_key &&
+                                                 read.chord_cycle_mode_key == shipped.chord_cycle_mode_key);
+    follows.Setting(C::YawModeKey,
+                    read.yaw_mode_key == shipped.yaw_mode_key && read.chord_yaw_mode_key == shipped.chord_yaw_mode_key);
+
+    return absent ? cfg::ImportResult::Absent(std::move(dropped), {}, follows.Concepts())
+                  : cfg::ImportResult::Imported(std::move(dropped), {}, follows.Concepts());
 }
 
 std::optional<cfg::ConfigOwner<Config>> g_owner;

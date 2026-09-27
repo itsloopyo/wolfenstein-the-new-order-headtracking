@@ -17,9 +17,16 @@
 // Comparison 2, import against migration, on every input: every setting, the startup state and
 // which actions every key press fires. There is no allowed difference. The file holds no
 // sensitivity, inversion, deadzone or reticle setting to drop, the frozen reader refuses every
-// hotkey code outside 0x01-0xFE and replaces every value that is not finite, so N1 and N2 never
-// apply, and no default moved. Each nav-cluster code and chord letter become one key list,
-// LimitY becomes PositionLimitY and PositionLimitYDown, and [Position] Enabled the startup pair.
+// hotkey code outside 0x01-0xFE and the six modifier keys and replaces every value that is not
+// finite, so N1, N2 and N3 never apply, and no default moved. Each nav-cluster code and chord
+// letter become one key list, LimitY becomes PositionLimitY and PositionLimitYDown, and
+// [Position] Enabled the startup pair.
+//
+// The rows the import leaves to Defaults.ini are, on every input, exactly the rows whose legacy
+// settings all hold what the dev build shipped, the tracking mode pair as one unit. Each input
+// is also migrated over a Defaults.ini that differs from the built-in values on every row: an
+// untouched row is written `default` and takes that file's value, and a changed row keeps the
+// player's, written `default` only where it equals what `default` gives there.
 //
 // Also asserted after every load: the folder, HeadTracking.ini's bytes, last write time and
 // attributes included, is as the import found it, with CameraUnlock.ini beside it after a
@@ -265,6 +272,7 @@ public:
         root_ = fs::temp_directory_path() / ("wolf-config-differential-" + std::to_string(GetCurrentProcessId()));
         fs::remove_all(root_);
         fs::create_directories(root_ / "global");
+        fs::create_directories(root_ / "skewed");
     }
     ~Scratch() {
         std::error_code ec;
@@ -279,7 +287,7 @@ public:
     // input's values.
     void Clear() {
         for (const auto& dir : fs::directory_iterator(root_)) {
-            if (dir.path().filename() == "global") continue;
+            if (dir.path().filename() == "global" || dir.path().filename() == "skewed") continue;
             for (const auto& e : fs::recursive_directory_iterator(dir.path())) {
                 if (e.is_regular_file()) SetFileAttributesW(e.path().c_str(), FILE_ATTRIBUTE_NORMAL);
             }
@@ -295,6 +303,11 @@ public:
     fs::path DefaultsPath() const { return root_ / "global" / "Defaults.ini"; }
     cameraunlock::config::DefaultsFile Defaults() const {
         return cameraunlock::config::DefaultsFile::At(DefaultsPath().wstring());
+    }
+    // A Defaults.ini that differs from the built-in values on every row, written once.
+    fs::path SkewedDefaultsPath() const { return root_ / "skewed" / "Defaults.ini"; }
+    cameraunlock::config::DefaultsFile SkewedDefaults() const {
+        return cameraunlock::config::DefaultsFile::At(SkewedDefaultsPath().wstring());
     }
 
 private:
@@ -443,6 +456,112 @@ cameraunlock::config::ConfigLoadResult<Config> LoadOwner(const Scratch& scratch,
     return owner.Load();
 }
 
+using C = cameraunlock::config::schema::Concept;
+
+// Every row the table binds, each of which follows Defaults.ini.
+const std::set<C>& AllRows() {
+    static const std::set<C> all = {
+        C::UdpPort,         C::EnableOnStartup,    C::WorldSpaceYaw,  C::RotationEnabled,
+        C::LocalSmoothing,  C::RemoteSmoothing,    C::PositionEnabled, C::PositionLimitX,
+        C::PositionLimitY,  C::PositionLimitYDown, C::PositionLimitZ, C::PositionLimitZBack,
+        C::ToggleKey,       C::CycleTrackingModeKey, C::YawModeKey,
+    };
+    return all;
+}
+
+// The rows the player never changed: every legacy setting a row is read from holds what the dev
+// build shipped. The mode pair is both rows or neither.
+std::set<C> UntouchedRows(const legacy::Config& l) {
+    const legacy::Config d;
+    std::set<C> untouched;
+    auto row = [&untouched](C id, bool same) {
+        if (same) untouched.insert(id);
+    };
+    row(C::UdpPort, l.udp_port == d.udp_port);
+    row(C::EnableOnStartup, l.enable_on_startup == d.enable_on_startup);
+    row(C::WorldSpaceYaw, l.world_space_yaw == d.world_space_yaw);
+    row(C::RotationEnabled, l.position_enabled == d.position_enabled);
+    row(C::PositionEnabled, l.position_enabled == d.position_enabled);
+    row(C::LocalSmoothing, l.local_smoothing == d.local_smoothing);
+    row(C::RemoteSmoothing, l.remote_smoothing == d.remote_smoothing);
+    row(C::PositionLimitX, l.limit_x == d.limit_x);
+    row(C::PositionLimitY, l.limit_y == d.limit_y);
+    row(C::PositionLimitYDown, l.limit_y == d.limit_y);
+    row(C::PositionLimitZ, l.limit_z == d.limit_z);
+    row(C::PositionLimitZBack, l.limit_z_back == d.limit_z_back);
+    row(C::ToggleKey, l.toggle_key == d.toggle_key && l.chord_toggle_key == d.chord_toggle_key);
+    row(C::CycleTrackingModeKey,
+        l.cycle_mode_key == d.cycle_mode_key && l.chord_cycle_mode_key == d.chord_cycle_mode_key);
+    row(C::YawModeKey, l.yaw_mode_key == d.yaw_mode_key && l.chord_yaw_mode_key == d.chord_yaw_mode_key);
+    return untouched;
+}
+
+std::string Names(const std::set<C>& rows) {
+    std::string text;
+    for (const C row : rows) {
+        text += (text.empty() ? "" : ", ") +
+                std::string(cameraunlock::config::schema::kConcepts[static_cast<std::size_t>(row)].name);
+    }
+    return text.empty() ? "none" : text;
+}
+
+// A Defaults.ini holding a value other than the built-in one on every row the table binds, so a
+// migration that wrote `default` on a row the player changed, or a value on one the player never
+// changed, reads back differently over it.
+const char* const kSkewedDefaults =
+    "[CameraUnlock]\r\nConfigFormat=1\r\n\r\n"
+    "[Network]\r\nUdpPort=5353\r\n\r\n"
+    "[General]\r\nEnableOnStartup=false\r\nWorldSpaceYaw=false\r\nRotationEnabled=false\r\n\r\n"
+    "[Smoothing]\r\nLocalSmoothing=0.5\r\nRemoteSmoothing=0.45\r\n\r\n"
+    "[Position]\r\nPositionEnabled=true\r\nPositionLimitX=0.45\r\nPositionLimitY=0.35\r\n"
+    "PositionLimitYDown=0.3\r\nPositionLimitZ=0.45\r\nPositionLimitZBack=0.25\r\n\r\n"
+    "[Hotkeys]\r\nToggleKey=F8\r\nCycleTrackingModeKey=F9\r\nYawModeKey=F10\r\n";
+
+// The skewed Defaults.ini as the table reads it over its own defaults.
+Config SkewedConfig() {
+    namespace cfg = cameraunlock::config;
+    const cfg::ConfigTable<Config> table = wolf_ht::config::MakeTable();
+    Config out = table.defaults();
+    const cfg::CanonicalIni doc = cfg::ParseCanonicalIni(kSkewedDefaults);
+    const bool clean = doc.diagnostics.empty() && cfg::ApplyCanonical(doc, table, out).diagnostics.empty();
+    Check(clean, "the skewed Defaults.ini sets every row with no diagnostic");
+    return out;
+}
+
+// `m` with every row in `follows` as `d` holds it.
+Config OverDefaults(Config m, const std::set<C>& follows, const Config& d) {
+    for (const C row : follows) {
+        switch (row) {
+            case C::UdpPort: m.udp_port = d.udp_port; break;
+            case C::EnableOnStartup: m.enable_on_startup = d.enable_on_startup; break;
+            case C::WorldSpaceYaw: m.world_space_yaw = d.world_space_yaw; break;
+            case C::RotationEnabled: m.rotation_enabled = d.rotation_enabled; break;
+            case C::PositionEnabled: m.position_enabled = d.position_enabled; break;
+            case C::LocalSmoothing:
+                m.local_smoothing = d.local_smoothing;
+                m.position.local_smoothing = d.position.local_smoothing;
+                break;
+            case C::RemoteSmoothing:
+                m.remote_smoothing = d.remote_smoothing;
+                m.position.remote_smoothing = d.position.remote_smoothing;
+                break;
+            case C::PositionLimitX: m.position.limit_x = d.position.limit_x; break;
+            case C::PositionLimitY: m.position.limit_y = d.position.limit_y; break;
+            case C::PositionLimitYDown: m.position.limit_y_down = d.position.limit_y_down; break;
+            case C::PositionLimitZ: m.position.limit_z = d.position.limit_z; break;
+            case C::PositionLimitZBack: m.position.limit_z_back = d.position.limit_z_back; break;
+            case C::ToggleKey: m.toggle_key_name = d.toggle_key_name; break;
+            case C::CycleTrackingModeKey: m.cycle_tracking_mode_key_name = d.cycle_tracking_mode_key_name; break;
+            case C::YawModeKey: m.yaw_mode_key_name = d.yaw_mode_key_name; break;
+            default: throw std::logic_error("the table has no row " + Names({row}));
+        }
+    }
+    return m;
+}
+
+int g_touched = 0;
+int g_modeTouched = 0;
+
 // The import with its map, on its own copy, for the values it drops.
 ImportResult RunMappedImport(Scratch& scratch, const Input& input) {
     const fs::path file = Place(scratch.Fresh("mapped"), input);
@@ -586,6 +705,49 @@ void Comparison2(Scratch& scratch, const Input& input, const ImportRun& import) 
     Check(imported.dropped.empty(), input.name + ": the import dropped a value");
     Check(imported.pose_shaping.empty(), input.name + ": the import recorded pose shaping");
 
+    // The rows left to Defaults.ini are exactly the ones the player never changed.
+    const std::set<C> follows(imported.follows_defaults_ini.begin(), imported.follows_defaults_ini.end());
+    Check(follows.size() == imported.follows_defaults_ini.size(),
+          input.name + ": follows_defaults_ini names each row once");
+    const std::set<C> untouched = UntouchedRows(l);
+    Check(follows == untouched,
+          input.name + ": follows Defaults.ini " + Names(follows) + ", untouched " + Names(untouched));
+    if (untouched != AllRows()) ++g_touched;
+    if (untouched.count(C::RotationEnabled) == 0) ++g_modeTouched;
+    if (input.name == "no file" || input.name == "empty file" || input.name == "dev first-run output") {
+        Check(untouched == AllRows(), input.name + ": every row follows Defaults.ini");
+    }
+
+    // Over a Defaults.ini that differs everywhere, a row the player never changed is written
+    // `default` and takes its value, and a changed row keeps the player's.
+    if (input.bytes) {
+        const fs::path dir = scratch.Fresh("skewed");
+        Place(dir, input);
+        cameraunlock::config::ConfigOwner<Config> owner(
+            wolf_ht::config::MakeOwnerOptions(dir.wstring(), scratch.SkewedDefaults()));
+        const cameraunlock::config::ConfigLoadResult<Config> loaded = owner.Load();
+        Check(loaded.status == ConfigLoadStatus::Migrated, input.name + " (skewed Defaults.ini): not migrated");
+        if (loaded.status == ConfigLoadStatus::Migrated) {
+            static const Config skewed = SkewedConfig();
+            const std::vector<std::string> sd = SettingsDifferences(OverDefaults(m, follows, skewed), loaded.config);
+            Check(sd.empty(), input.name + " (skewed Defaults.ini): the session differs on " + Join(sd));
+            const std::string bytes = ReadBytes(dir / kConfigName);
+            for (const C row : AllRows()) {
+                const std::string key = cameraunlock::config::schema::kConcepts[static_cast<std::size_t>(row)].key;
+                const bool isDefault = bytes.find("\r\n" + key + "=default\r\n") != std::string::npos;
+                // A changed row is written `default` too where it holds what `default` gives, the
+                // mode pair as one unit.
+                const std::set<C> unit = row == C::RotationEnabled || row == C::PositionEnabled
+                                             ? std::set<C>{C::RotationEnabled, C::PositionEnabled}
+                                             : std::set<C>{row};
+                const bool asDefaultGives = SettingsDifferences(OverDefaults(m, unit, skewed), m).empty();
+                Check(isDefault == (follows.count(row) != 0 || asDefaultGives),
+                      input.name + " (skewed Defaults.ini): " + key + (isDefault ? " is" : " is not") +
+                          " written default");
+            }
+        }
+    }
+
     const wolf_oracle_view::FireTable before = wolf_oracle_view::OracleFires(ImportKeys(l));
     const wolf_oracle_view::FireTable after = CurrentFires(m);
     Check(FireDifference(before, after, wolf_oracle_view::kActions) == "none",
@@ -654,10 +816,14 @@ int main(int argc, char** argv) {
             std::printf("  expected difference: %s\n", difference);
         }
         std::printf("comparison 2 (the import against the migration)\n");
+        WriteBytes(scratch.SkewedDefaultsPath(), kSkewedDefaults);
         for (const Input& input : inputs) {
             Comparison2(scratch, input, Comparison1(scratch, input));
             scratch.Clear();
         }
+        std::printf("%d inputs changed a row from the dev build's default, %d of them the tracking mode\n",
+                    g_touched, g_modeTouched);
+        Check(g_touched > 0 && g_modeTouched > 0, "the inputs change rows, the tracking mode among them");
 
         if (migratedDir != nullptr) {
             fs::remove_all(migratedDir);
