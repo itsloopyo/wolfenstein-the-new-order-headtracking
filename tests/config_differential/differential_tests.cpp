@@ -17,8 +17,8 @@
 // Comparison 2, import against migration, on every input: every setting, the startup state and
 // which actions every key press fires. There is no allowed difference. The file holds no
 // sensitivity, inversion, deadzone or reticle setting to drop, the frozen reader refuses every
-// hotkey code outside 0x01-0xFE and the six modifier keys and replaces every value that is not
-// finite, so N1, N2 and N3 never apply, and no default moved. Each nav-cluster code and chord
+// hotkey code outside 0x01-0xFE and every Ctrl, Shift and Alt code (0x10-0x12, 0xA0-0xA5) and
+// replaces every value that is not finite, so N1, N2 and N3 never apply, and no default moved. Each nav-cluster code and chord
 // letter become one key list, LimitY becomes PositionLimitY and PositionLimitYDown, and
 // [Position] Enabled the startup pair.
 //
@@ -238,7 +238,8 @@ std::vector<cameraunlock::config::testing::MutationKey> MutationKeys() {
         m.out_of_range = std::move(oor);
         return m;
     };
-    // The reader refuses a code outside 0x01-0xFE and the six modifier keys.
+    // The reader refuses a code outside 0x01-0xFE and every Ctrl, Shift and Alt code (0x10-0x12,
+    // 0xA0-0xA5).
     auto hotkey = [&plain](const char* k, const char* alt) {
         MutationKey m = plain("Hotkeys", k, alt, {"0x0", "0x10", "0xA0", "0xFF"});
         m.hotkey = true;

@@ -284,7 +284,7 @@ The mod writes `HeadTracking.log` next to `WolfNewOrder_x64.exe`, starting a fre
 
 ## Updating
 
-Download the new release and run `install.cmd` again. The installer copies no config, so `CameraUnlock.ini` keeps your settings. Updating from a version that kept them in `HeadTracking.ini` imports them once, as [Configuration](#configuration) describes.
+Download the new release and run `install.cmd` again. The installer copies no config, so `CameraUnlock.ini` keeps your settings. Updating from a version that kept them in `HeadTracking.ini` reads them from there once, the first time no `CameraUnlock.ini` exists.
 
 ## Uninstalling
 
