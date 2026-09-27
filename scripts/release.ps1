@@ -59,6 +59,7 @@ try {
     $current = Get-ModVersion
     $new = Resolve-ReleaseVersion -Argument $Version -CurrentVersion $current
     if (-not (Test-SemanticVersion -Version $new)) { throw "Resolved version '$new' is not X.Y.Z." }
+    Assert-ReleaseNotBelowCanonicalSince -RepoRoot $project.Root -Version $new
 
     # New-ReleaseTag pushes to `main`, so releasing from any other branch would
     # push commits the branch does not contain. Gate before anything mutates.
