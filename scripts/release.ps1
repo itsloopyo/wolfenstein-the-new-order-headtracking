@@ -78,20 +78,12 @@ try {
     # any version or building - a failure here then leaves a clean tree instead
     # of stranding a half-applied bump with no tag.
     try {
-        New-ChangelogFromCommits -ChangelogPath 'CHANGELOG.md' -Version $new | Out-Null
+        New-ChangelogFromCommits -ChangelogPath 'CHANGELOG.md' -Version $new -Maintenance:$Force | Out-Null
     } catch {
-        if (-not $Force) {
-            Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
-            Write-Host "No user-facing changes to release. Re-run with -Force for a maintenance release." -ForegroundColor Yellow
-            exit 1
-        }
-        # Printed even under -Force: this catch sees every failure of
-        # New-ChangelogFromCommits, not only "all commits filtered as noise". A
-        # missing CHANGELOG.md or a git failure would otherwise be relabelled
-        # "no user-facing changes" and released.
-        Write-Host "Changelog generation failed: $($_.Exception.Message)" -ForegroundColor Yellow
-        Write-Host "Writing maintenance entry (-Force)." -ForegroundColor Yellow
-        Add-MaintenanceChangelogEntry -Path (Join-Path $project.Root 'CHANGELOG.md') -NewVersion $new
+        if ($Force) { throw }
+        Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "No user-facing changes to release. Re-run with -Force for a maintenance release." -ForegroundColor Yellow
+        exit 1
     }
 
     # Re-point THIRD-PARTY-NOTICES.md at the pinned cameraunlock-core commit.

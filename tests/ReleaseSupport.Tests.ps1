@@ -79,45 +79,6 @@ try {
     Check 'Update-VersionInFile fails loudly when the stamp matches nothing' `
         ($err -like '*did not match anything*') "threw '$err'"
 
-    # --- Add-MaintenanceChangelogEntry -------------------------------------
-
-    $today = Get-Date -Format 'yyyy-MM-dd'
-
-    $changelog = Join-Path $sandbox 'CHANGELOG.md'
-    Set-TextFileNoBom -Path $changelog -Text "# Changelog`n`n## [0.0.0] - 2026-09-02`n`n### Added`n- Initial release.`n"
-    Add-MaintenanceChangelogEntry -Path $changelog -NewVersion '0.1.0'
-    $text = [System.IO.File]::ReadAllText($changelog)
-
-    Check 'Add-MaintenanceChangelogEntry keeps the Changelog heading first' `
-        ($text.StartsWith("# Changelog`n`n## [0.1.0] - $today")) "got: $text"
-    Check 'Add-MaintenanceChangelogEntry writes the maintenance body' `
-        ($text -match '### Changed\n\n- Maintenance release \(no user-facing changes\)\.') "got: $text"
-    Check 'Add-MaintenanceChangelogEntry inserts above the previous entry' `
-        ($text.IndexOf('## [0.1.0]') -lt $text.IndexOf('## [0.0.0]')) "got: $text"
-    Check 'Add-MaintenanceChangelogEntry preserves the previous entry' `
-        ($text -match '## \[0\.0\.0\] - 2026-09-02\n\n### Added\n- Initial release\.') "got: $text"
-    Check 'Add-MaintenanceChangelogEntry ends the file with exactly one newline' `
-        ($text.EndsWith("release.`n") -and -not $text.EndsWith("`n`n")) "got: $text"
-    Check 'Add-MaintenanceChangelogEntry writes no BOM' (-not (Test-HasBom $changelog)) 'file starts with a UTF-8 BOM'
-
-    $emptyLog = Join-Path $sandbox 'EMPTY-CHANGELOG.md'
-    Set-TextFileNoBom -Path $emptyLog -Text "# Changelog`n"
-    Add-MaintenanceChangelogEntry -Path $emptyLog -NewVersion '0.1.0'
-    $emptyText = [System.IO.File]::ReadAllText($emptyLog)
-    Check 'Add-MaintenanceChangelogEntry seeds a changelog that has no entries yet' `
-        ($emptyText.StartsWith("# Changelog`n## [0.1.0] - $today")) "got: $emptyText"
-
-    # A heading with no blank line under it: the entry belongs above the newest
-    # entry, not between that entry's heading and its body.
-    $tightLog = Join-Path $sandbox 'TIGHT-CHANGELOG.md'
-    Set-TextFileNoBom -Path $tightLog -Text "# Changelog`n## [0.0.0] - 2026-09-02`n`n### Added`n- Initial release.`n"
-    Add-MaintenanceChangelogEntry -Path $tightLog -NewVersion '0.1.0'
-    $tightText = [System.IO.File]::ReadAllText($tightLog)
-    Check 'Add-MaintenanceChangelogEntry inserts above an entry the heading abuts' `
-        ($tightText.StartsWith("# Changelog`n## [0.1.0] - $today")) "got: $tightText"
-    Check 'Add-MaintenanceChangelogEntry leaves the abutting entry intact' `
-        ($tightText -match '## \[0\.0\.0\] - 2026-09-02\n\n### Added\n- Initial release\.') "got: $tightText"
-
     # --- Copy-FileLiteral / New-ZipFromDirectory ---------------------------
     #
     # The regression these lock: Copy-Item -Path and Compress-Archive -Path are
@@ -202,12 +163,6 @@ try {
     $err = Get-ThrownMessage { New-ZipFromDirectory -SourceDir (Join-Path $sandbox 'absent-stage') -DestinationPath (Join-Path $sandbox 'x.zip') }
     Check 'New-ZipFromDirectory fails loudly when the stage is missing' `
         ($err -like '*Staging directory does not exist*') "threw '$err'"
-
-    $headless = Join-Path $sandbox 'HEADLESS-CHANGELOG.md'
-    Set-TextFileNoBom -Path $headless -Text "## [0.0.0] - 2026-09-02`n`n### Added`n- Initial release.`n"
-    $err = Get-ThrownMessage { Add-MaintenanceChangelogEntry -Path $headless -NewVersion '0.1.0' }
-    Check 'Add-MaintenanceChangelogEntry fails loudly with no Changelog heading' `
-        ($err -like "*does not start with a '# Changelog' heading*") "threw '$err'"
 } finally {
     Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
 }
