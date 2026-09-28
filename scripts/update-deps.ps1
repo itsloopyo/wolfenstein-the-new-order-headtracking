@@ -10,6 +10,24 @@ Import-Module (Join-Path $PSScriptRoot 'ModProject.psm1') -Force
 $project = Get-ModProject
 Import-Module (Join-Path $project.Root 'cameraunlock-core/powershell/ModLoaderSetup.psm1') -Force
 
+# Not Get-FileHash: Windows PowerShell 5.1 autoloads it from a script module,
+# and a powershell.exe started from pwsh (GitHub Actions' shell: pwsh)
+# inherits pwsh's PSModulePath, resolves the Core-only
+# Microsoft.PowerShell.Utility first and reports the cmdlet as not recognized.
+function Get-Sha256Hex {
+    [OutputType([string])]
+    param([Parameter(Mandatory)][string]$LiteralPath)
+
+    $sha    = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead((Convert-Path -LiteralPath $LiteralPath))
+    try {
+        return [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $stream.Dispose()
+        $sha.Dispose()
+    }
+}
+
 # Fixed by the PE format: the offset of the PE header pointer in the DOS stub,
 # the "PE\0\0" signature it points at, and IMAGE_FILE_MACHINE_AMD64.
 $PeHeaderPointerOffset = 0x3C
@@ -115,7 +133,7 @@ try {
 # README.md from scratch above (its "unchanged, leave the tree alone" shortcut
 # needs the zip on disk, and we never keep it), so this section is appended to a
 # fresh file rather than stacking up a run at a time.
-$dllHash = (Get-FileHash -LiteralPath $dllPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$dllHash = Get-Sha256Hex -LiteralPath $dllPath
 Add-Content -LiteralPath (Join-Path $project.VendorLoaderDir 'README.md') -Encoding utf8 -Value @"
 
 ## Committed artifact
