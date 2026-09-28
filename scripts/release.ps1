@@ -73,6 +73,18 @@ try {
     if (Test-GitTagExists -Tag "v$new") { throw "Tag v$new already exists." }
 
 
+    Write-Host "Running the full test suite..." -ForegroundColor Cyan
+    Push-Location $project.Root
+    try {
+        pixi run test
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Error: pixi run test failed. Nothing was changed." -ForegroundColor Red
+            exit 1
+        }
+    } finally {
+        Pop-Location
+    }
+
     # Generate CHANGELOG from commits since the last tag. This is the gate that
     # aborts when there are no user-facing commits, so run it BEFORE stamping
     # any version or building - a failure here then leaves a clean tree instead
